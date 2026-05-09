@@ -8,7 +8,7 @@ import re
 import time
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="*")
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
