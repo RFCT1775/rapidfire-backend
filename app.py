@@ -10,70 +10,67 @@ CORS(app, origins="*", allow_headers=["Content-Type"], methods=["GET", "POST", "
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 def search_orgs_with_claude(location, org_type):
-    queries = []
     city = location.split(',')[0].strip()
+    state = location.split(',')[1].strip() if ',' in location else 'CA'
 
-    if org_type in ('all', 'fire'):
-        queries.append(f"fire department association {location} contact email events")
-        queries.append(f"firefighters union local {location} contact")
-    if org_type in ('all', 'police'):
-        queries.append(f"police officers association {location} contact email")
-        queries.append(f"law enforcement association {location} events")
-    if org_type in ('all', 'ems'):
-        queries.append(f"paramedic EMS association {location} contact email")
-    if org_type in ('all', 'veterans'):
-        queries.append(f"veterans group organization {location} contact email events")
-        queries.append(f"veterans association {location} morale events")
+    type_filter = ""
+    if org_type == 'fire':
+        type_filter = "Focus only on fire departments and firefighter associations."
+    elif org_type == 'police':
+        type_filter = "Focus only on police departments and law enforcement associations."
+    elif org_type == 'ems':
+        type_filter = "Focus only on EMS, paramedic, and emergency medical services organizations."
+    elif org_type == 'veterans':
+        type_filter = "Focus only on veterans groups and military veteran associations."
 
-    found_orgs = []
-    seen_names = set()
+    prompt = f"""You are helping find first responder organizations in {location} that might want to book a live comedy show for their next event or party.
 
-    for query in queries[:4]:
-        try:
-            response = client.messages.create(
-                model="claude-opus-4-5",
-                max_tokens=1024,
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                messages=[{
-                    "role": "user",
-                    "content": f"""Search for: {query}
+List 8 real, specific first responder organizations, associations, unions, or groups in or near {city}, {state}. Include fire departments, police associations, EMS groups, and veterans organizations.
 
-Find real first responder organizations, associations, or groups in {location}.
-For each result found, extract:
-- Organization name
-- City
-- Contact email if visible
-- Website URL
-- Type (fire department, police, EMS, veterans group)
+{type_filter}
 
-Return a JSON array of up to 3 organizations. Format:
-[{{"name": "...", "city": "...", "contact": "...", "website": "...", "type": "..."}}]
+For each organization, provide:
+- Real name of the organization
+- City it's based in
+- A realistic contact email (based on their actual domain if you know it, or a reasonable guess like info@[orgname].org)
+- Their website if you know it
+- Type (fire department, police & law enforcement, EMS & paramedics, or veterans group)
 
-If no email is found, use "No email found" for contact.
-Return ONLY the JSON array, no other text."""
-                }]
-            )
+Return ONLY a valid JSON array, no other text:
+[
+  {{
+    "name": "Organization Name",
+    "city": "{city}",
+    "contact": "contact@example.org",
+    "website": "https://example.org",
+    "type": "Fire department"
+  }}
+]"""
 
-            text = ""
-            for block in response.content:
-                if hasattr(block, 'text'):
-                    text += block.text
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
 
-            text = text.strip()
-            if text.startswith('['):
-                orgs = json.loads(text)
-                for org in orgs:
-                    if org.get('name') and org['name'] not in seen_names:
-                        seen_names.add(org['name'])
-                        if not org.get('city'):
-                            org['city'] = city
-                        found_orgs.append(org)
+        text = response.content[0].text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
 
-        except Exception as e:
-            print(f"Search error for query '{query}': {e}")
-            continue
+        start = text.find('[')
+        end = text.rfind(']') + 1
+        if start >= 0 and end > start:
+            text = text[start:end]
 
-    return found_orgs[:12]
+        orgs = json.loads(text)
+        return orgs[:12]
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return []
 
 @app.route('/search', methods=['GET'])
 def search():
