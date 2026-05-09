@@ -25,8 +25,7 @@ def search_orgs_with_claude(location, org_type):
 
     prompt = f"""You are helping find first responder organizations in {location} that might want to book a live comedy show for their next event or party.
 
-List 8 real, specific first responder organizations, associations, unions, or groups in or near {city}, {state}. Include fire departments, police associations, EMS groups, and veterans organizations.
-
+List 8 real, specific first responder ASSOCIATIONS, UNIONS, SOCIAL CLUBS, BENEVOLENT SOCIETIES, and FRATERNAL ORGANIZATIONS in or near {city}, {state}. Focus on groups that host events, parties, banquets, and social gatherings — like firefighter locals, police benevolent associations, EMS unions, veterans posts (VFW, American Legion), and first responder social clubs. Avoid listing generic city departments — find the social/union/association side of these communities.
 {type_filter}
 
 For each organization, provide:
