@@ -26,6 +26,7 @@ def search_orgs_with_claude(location, org_type):
     prompt = f"""You are helping find first responder organizations in {location} that might want to book a live comedy show for their next event or party.
 
 List 8 real, specific first responder ASSOCIATIONS, UNIONS, SOCIAL CLUBS, BENEVOLENT SOCIETIES, and FRATERNAL ORGANIZATIONS in or near {city}, {state}. Focus on groups that host events, parties, banquets, and social gatherings — like firefighter locals, police benevolent associations, EMS unions, veterans posts (VFW, American Legion), and first responder social clubs. Avoid listing generic city departments — find the social/union/association side of these communities.
+
 {type_filter}
 
 For each organization, provide:
@@ -78,6 +79,43 @@ def search():
     try:
         orgs = search_orgs_with_claude(location, org_type)
         return jsonify({'success': True, 'orgs': orgs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/generate-email', methods=['POST'])
+def generate_email():
+    try:
+        data = request.get_json()
+        org_name = data.get('name', '')
+        org_type = data.get('type', '')
+        org_city = data.get('city', '')
+
+        prompt = f"""You are writing a warm, personal, story-driven outreach email on behalf of the Rapid Fire Comedy Tour — a nonprofit that brings free live stand-up comedy to military bases and first responder communities. The founder is Michael D'Angelo, a former Marine Corps machine gunner from Las Vegas who started the tour to give humor back to those who serve.
+
+Write a single outreach email to the following organization pitching them to have Rapid Fire Comedy Tour perform at their next event, party, or gathering. The email should feel hand-written and genuine — not like a form letter. Reference the org type naturally. Keep it under 180 words. Be warm, slightly self-deprecating, and end with a low-pressure call to action.
+
+Organization: {org_name}
+Type: {org_type}
+City: {org_city}
+
+Respond with JSON only, no markdown:
+{{"subject": "...", "body": "..."}}"""
+
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        text = response.content[0].text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+
+        parsed = json.loads(text)
+        return jsonify({'success': True, 'subject': parsed['subject'], 'body': parsed['body']})
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
