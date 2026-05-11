@@ -45,7 +45,7 @@ Focus on groups that host events, parties, banquets, graduations, and social gat
 For each organization:
 - Real name
 - City  
-- Contact email (always an actual email — prefer direct Gmail or known addresses, guess info@[orgname].org if needed, never say "visit website")
+- Contact email — ONLY include an email if you are confident it is real and working. For large well-known organizations, provide their known email. For small local VFW or American Legion posts where you are not sure of the exact email, use their national lookup format like post1234@vfw.org or alpost1234@legion.org only if you know it works. If genuinely unsure, write "No email found" — it is better to say no email than to guess a wrong one.
 - Website if known
 - Type: use exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
 
