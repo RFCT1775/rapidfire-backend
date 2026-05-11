@@ -34,7 +34,7 @@ List 8 real, specific organizations in or near {city}, {state} from these catego
 For each organization, provide:
 - Real name of the organization
 - City it's based in
-- A realistic contact email (based on their actual domain if you know it, or a reasonable guess like info@[orgname].org)
+- The best contact email you know for them — prefer direct Gmail addresses, secretary emails, or business manager emails over generic info@ addresses. For unions and locals, they often have a Gmail like local112@gmail.com or similar.
 - Their website if you know it
 - Type: use exactly one of these: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
 
