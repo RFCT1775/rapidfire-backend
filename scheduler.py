@@ -62,7 +62,28 @@ def get_current_city(records):
             return city
     return CITIES[-1]
 
-def log_to_sheet(org):
+def find_phone(org):
+    try:
+        prompt = f"""What is the main phone number for {org['name']} in {org['city']}?
+{f"Their website is {org['website']}." if org.get('website') else ''}
+Return ONLY a JSON object: {{"phone": "..."}}
+If unknown: {{"phone": "Not found"}}"""
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = response.content[0].text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        parsed = json.loads(text)
+        return parsed.get("phone", "Not found")
+    except:
+        return "Not found"
+
+def log_to_sheet(org, status="Contacted"):
     """Log a new org to Google Sheet via Apps Script"""
     try:
         requests.post(SHEET_URL, json={
@@ -71,7 +92,7 @@ def log_to_sheet(org):
             "city": org["city"],
             "contact": org.get("contact", ""),
             "website": org.get("website", ""),
-            "status": "Contacted"
+            "status": status
         }, timeout=15)
     except Exception as e:
         print(f"Error logging to sheet: {e}")
@@ -162,7 +183,7 @@ Return JSON only: {{"subject": "...", "body": "..."}}"""
         text = text.split("```")[1].split("```")[0].strip()
     return json.loads(text)
 
-def send_digest_email(orgs_and_emails, current_city):
+def send_digest_email(orgs_and_emails, call_list, current_city):
     gmail_user = os.environ.get("GMAIL_USER")
     gmail_password = os.environ.get("GMAIL_APP_PASSWORD")
 
@@ -174,8 +195,9 @@ def send_digest_email(orgs_and_emails, current_city):
     <html><body style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
     <h1 style="color: #ff4d00;">🔥 Rapid Fire Daily Outreach Digest</h1>
     <p style="color: #666;">Date: {datetime.now().strftime("%B %d, %Y")} | City: {current_city}</p>
-    <p>Here are today's {len(orgs_and_emails)} outreach emails ready to send. Click each button to open in Gmail and hit Send!</p>
+    <p>📧 <strong>{len(orgs_and_emails)} emails ready to send</strong> | 📞 <strong>{len(call_list)} orgs to call</strong></p>
     <hr/>
+    <h2>📧 Emails — click to open in Gmail and send</h2>
     """
 
     for i, (org, email) in enumerate(orgs_and_emails):
@@ -198,6 +220,16 @@ def send_digest_email(orgs_and_emails, current_city):
             </div>
         </div>
         """
+
+    if call_list:
+        html += """<hr/><h2>📞 Call List — no email found, logged to your sheet</h2>"""
+        for org in call_list:
+            html += f"""
+            <div style="border:1px solid #ffcdd2;border-radius:8px;padding:15px;margin:10px 0;background:#fff8f8;">
+                <strong>{org['name']}</strong> — {org['type']}<br/>
+                📍 {org['city']} | 📞 {org.get('phone', 'Not found')}
+                {f"| <a href='{org['website']}'>Website ↗</a>" if org.get('website') else ''}
+            </div>"""
 
     html += "</body></html>"
 
@@ -225,16 +257,28 @@ def run_daily_job():
         print(f"Found {len(orgs)} new orgs")
 
         orgs_and_emails = []
+        call_list = []
         for org in orgs:
-            try:
-                email = generate_email(org)
-                log_to_sheet(org)
-                orgs_and_emails.append((org, email))
-                print(f"Generated email for: {org['name']}")
-            except Exception as e:
-                print(f"Error for {org['name']}: {e}")
+            has_email = org.get("contact") and org["contact"] != "No email found"
+            if has_email:
+                try:
+                    email = generate_email(org)
+                    log_to_sheet(org, "Contacted")
+                    orgs_and_emails.append((org, email))
+                    print(f"Generated email for: {org['name']}")
+                except Exception as e:
+                    print(f"Error for {org['name']}: {e}")
+            else:
+                try:
+                    phone = find_phone(org)
+                    org["phone"] = phone
+                    log_to_sheet(org, f"Call directly: {phone}")
+                    call_list.append(org)
+                    print(f"No email — logged for call: {org['name']} ({phone})")
+                except Exception as e:
+                    print(f"Error for {org['name']}: {e}")
 
-        send_digest_email(orgs_and_emails, current_city)
+        send_digest_email(orgs_and_emails, call_list, current_city)
         print("Daily job complete!")
 
     except Exception as e:
