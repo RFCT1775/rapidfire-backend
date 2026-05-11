@@ -9,40 +9,53 @@ CORS(app, origins="*", allow_headers=["Content-Type"], methods=["GET", "POST", "
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-def search_category(location, city, state, category, count, exclude_names):
+def search_orgs_with_claude(location, org_type, exclude_names):
+    city = location.split(',')[0].strip()
+    state = location.split(',')[1].strip() if ',' in location else 'CA'
+
     exclude_str = ""
     if exclude_names:
-        exclude_str = f"\n\nDo NOT include any of these organizations as they have already been contacted:\n" + "\n".join(f"- {n}" for n in exclude_names)
+        exclude_str = f"\n\nDo NOT include any of these already-contacted organizations:\n" + "\n".join(f"- {n}" for n in exclude_names[:50])
 
-    if category == 'veterans':
-        type_desc = "veterans posts (VFW, American Legion), veteran service organizations, and military fraternal groups"
-        type_label = "Veterans group"
-    elif category == 'firstresponder':
-        type_desc = "firefighter locals/unions, police protective leagues, EMS associations, and first responder benevolent societies"
-        type_label = "varies"
-    else:  # tactical
-        type_desc = "veteran-owned tactical training companies, firearms training groups, self-defense schools, and shooting ranges that host events and community gatherings"
-        type_label = "Tactical training group"
+    if org_type == 'all':
+        counts = "exactly 5 veterans groups, exactly 5 first responder groups (fire/police/EMS), and exactly 10 tactical training companies"
+        type_desc = """Include these specific types:
+- Veterans groups: VFW posts, American Legion posts, veteran service organizations, military fraternal groups
+- First responder groups: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies
+- Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges that host community events"""
+    elif org_type == 'veterans':
+        counts = "10 veterans groups"
+        type_desc = "Veterans groups: VFW posts, American Legion posts, veteran service organizations, military fraternal groups"
+    elif org_type == 'tactical':
+        counts = "10 tactical training companies"
+        type_desc = "Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges"
+    else:
+        counts = "10 first responder organizations"
+        type_desc = "First responder groups: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies"
 
     prompt = f"""You are helping find organizations in {location} that might want to book a live comedy show, guest speaker, emcee, or entertainment for their next event.
 
-List {count} real, specific {type_desc} in or near {city}, {state}. Focus on groups that host events, parties, banquets, graduations, and social gatherings.
+Find {counts} in or near {city}, {state}.
+
+{type_desc}
+
+Focus on groups that host events, parties, banquets, graduations, and social gatherings.
 {exclude_str}
 
-For each organization provide:
+For each organization:
 - Real name
-- City
-- Contact email — always an actual email, never "visit website". Prefer direct Gmail or secretary/business manager emails. Guess info@[orgname].org if needed.
+- City  
+- Contact email (always an actual email — prefer direct Gmail or known addresses, guess info@[orgname].org if needed, never say "visit website")
 - Website if known
 - Type: use exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
 
-Return ONLY a valid JSON array:
+Return ONLY a valid JSON array with ALL organizations listed:
 [{{"name":"...","city":"{city}","contact":"...","website":"...","type":"..."}}]"""
 
     try:
         response = client.messages.create(
             model="claude-opus-4-5",
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}]
         )
         text = response.content[0].text.strip()
@@ -54,40 +67,16 @@ Return ONLY a valid JSON array:
         end = text.rfind(']') + 1
         if start >= 0 and end > start:
             text = text[start:end]
-        return json.loads(text)
+        orgs = json.loads(text)
+
+        # Filter out excluded names
+        exclude_lower = [e.lower() for e in exclude_names]
+        filtered = [o for o in orgs if o.get('name','').lower() not in exclude_lower]
+        return filtered
+
     except Exception as e:
-        print(f"Search error for {category}: {e}")
+        print(f"Search error: {e}")
         return []
-
-def search_orgs_with_claude(location, org_type, exclude_names):
-    city = location.split(',')[0].strip()
-    state = location.split(',')[1].strip() if ',' in location else 'CA'
-    results = []
-
-    if org_type == 'all':
-        veterans = search_category(location, city, state, 'veterans', 5, exclude_names)
-        results.extend(veterans)
-        first = search_category(location, city, state, 'firstresponder', 5, exclude_names)
-        results.extend(first)
-        tactical = search_category(location, city, state, 'tactical', 10, exclude_names)
-        results.extend(tactical)
-    elif org_type == 'veterans':
-        results = search_category(location, city, state, 'veterans', 10, exclude_names)
-    elif org_type == 'tactical':
-        results = search_category(location, city, state, 'tactical', 10, exclude_names)
-    else:
-        results = search_category(location, city, state, 'firstresponder', 10, exclude_names)
-
-    # Filter out any that slipped through
-    seen = set()
-    filtered = []
-    for org in results:
-        name = org.get('name', '').strip().lower()
-        if name and name not in seen and name not in [e.lower() for e in exclude_names]:
-            seen.add(name)
-            filtered.append(org)
-
-    return filtered
 
 @app.route('/search', methods=['GET', 'POST'])
 def search():
@@ -119,7 +108,6 @@ def generate_email():
 
 Write a warm, personal, story-driven email to the following organization. Use this structure and tone as your guide — but personalize it naturally for the specific org type:
 
----
 Hi there,
 
 My name's Michael D'Angelo — I'm a Marine Corps machine gunner turned comedian, which is probably the only career pivot that makes less sense than it sounds.
@@ -136,11 +124,9 @@ Semper Fi,
 Michael D'Angelo
 Founder, Rapid Fire Comedy Tour
 info@rapidfirecomedytour.org
----
 
 Key rules:
-- Do NOT say the show is free
-- Do NOT use the word "free" anywhere
+- Do NOT say the show is free, do NOT use the word "free"
 - Position it as a service worth having
 - Keep it under 200 words
 - Sound like a real person wrote it
