@@ -116,7 +116,7 @@ I started the Rapid Fire Comedy Tour to bring live stand-up comedy to the people
 
 I'd love to bring a show to [ORG NAME]. I have a roster of comedians I book for events across the country, and there's something special about making a room full of [REFERENCE TO THEIR SPECIFIC COMMUNITY] laugh. Beyond stand-up, I'm also available as a guest speaker or emcee for events, banquets, graduations, or any gathering where you want someone who actually gets your world.
 
-If you've got an upcoming event, holiday party, awards banquet, or even just a slow Tuesday — I'd love to have a conversation about making it memorable.
+If you've got an upcoming event, holiday party, awards banquet, or even just a slow Tuesday — I'd love to have a conversation about making it memorable. You can also visit our website at www.rapidfirecomedytour.org to read letters of recommendation from previous shows.
 
 Worth a chat?
 
@@ -124,6 +124,7 @@ Semper Fi,
 Michael D'Angelo
 Founder, Rapid Fire Comedy Tour
 info@rapidfirecomedytour.org
+www.rapidfirecomedytour.org
 
 Key rules:
 - Do NOT say the show is free, do NOT use the word "free"
