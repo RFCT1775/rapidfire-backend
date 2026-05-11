@@ -104,12 +104,13 @@ def search_orgs(location, exclude_names):
     if exclude_names:
         exclude_str = "\n\nDo NOT include these already-contacted organizations:\n" + "\n".join(f"- {n}" for n in exclude_names[:50])
 
-    prompt = f"""Find exactly 5 veterans groups, exactly 5 first responder groups (fire/police/EMS), and exactly 10 tactical training companies in or near {city}, {state}.
+    prompt = f"""Find exactly 5 veterans groups, exactly 5 first responder groups (fire/police/EMS), exactly 5 tactical training companies, and exactly 5 executive private security companies in or near {city}, {state}.
 
 Include:
 - Veterans groups: VFW posts, American Legion posts, veteran service organizations
 - First responder groups: firefighter locals/unions, police protective leagues, EMS associations
 - Tactical training companies: veteran-owned firearms training, self-defense schools, shooting ranges
+- Executive private security companies: high-end security firms, executive protection companies, corporate security consultancies — typically staffed by former military or law enforcement
 {exclude_str}
 
 For each organization:
@@ -117,7 +118,7 @@ For each organization:
 - City
 - Contact email (only if confident it's real — say "No email found" if unsure)
 - Website if known
-- Type: exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
+- Type: exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group", "Private security"
 
 Return ONLY a valid JSON array:
 [{{"name":"...","city":"{city}","contact":"...","website":"...","type":"..."}}]"""

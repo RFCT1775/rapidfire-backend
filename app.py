@@ -18,17 +18,21 @@ def search_orgs_with_claude(location, org_type, exclude_names):
         exclude_str = f"\n\nDo NOT include any of these already-contacted organizations:\n" + "\n".join(f"- {n}" for n in exclude_names[:50])
 
     if org_type == 'all':
-        counts = "exactly 5 veterans groups, exactly 5 first responder groups (fire/police/EMS), and exactly 10 tactical training companies"
+        counts = "exactly 5 veterans groups, exactly 5 first responder groups (fire/police/EMS), exactly 5 tactical training companies, and exactly 5 executive private security companies"
         type_desc = """Include these specific types:
 - Veterans groups: VFW posts, American Legion posts, veteran service organizations, military fraternal groups
 - First responder groups: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies
-- Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges that host community events"""
+- Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges that host community events
+- Executive private security companies: high-end security firms, executive protection companies, corporate security consultancies — typically staffed by former military or law enforcement"""
     elif org_type == 'veterans':
         counts = "10 veterans groups"
         type_desc = "Veterans groups: VFW posts, American Legion posts, veteran service organizations, military fraternal groups"
     elif org_type == 'tactical':
         counts = "10 tactical training companies"
         type_desc = "Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges"
+    elif org_type == 'security':
+        counts = "10 executive private security companies"
+        type_desc = "Executive private security companies: high-end security firms, executive protection companies, corporate security consultancies — typically staffed by former military or law enforcement"
     else:
         counts = "10 first responder organizations"
         type_desc = "First responder groups: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies"
@@ -47,7 +51,7 @@ For each organization:
 - City  
 - Contact email — ONLY include an email if you are confident it is real and working. For large well-known organizations, provide their known email. For small local VFW or American Legion posts where you are not sure of the exact email, use their national lookup format like post1234@vfw.org or alpost1234@legion.org only if you know it works. If genuinely unsure, write "No email found" — it is better to say no email than to guess a wrong one.
 - Website if known
-- Type: use exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
+- Type: use exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group", "Private security"
 
 Return ONLY a valid JSON array with ALL organizations listed:
 [{{"name":"...","city":"{city}","contact":"...","website":"...","type":"..."}}]"""
