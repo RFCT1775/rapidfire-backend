@@ -158,6 +158,38 @@ Respond with JSON only, no markdown:
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/find-phone', methods=['POST'])
+def find_phone():
+    try:
+        data = request.get_json()
+        org_name = data.get('name', '')
+        org_city = data.get('city', '')
+        org_website = data.get('website', '')
+
+        prompt = f"""What is the main phone number for {org_name} in {org_city}?
+{f'Their website is {org_website}.' if org_website else ''}
+
+Return ONLY a JSON object with the phone number:
+{{"phone": "..."}}
+
+If you don't know the phone number, return:
+{{"phone": "Not found — visit {org_website or 'their website'}"}}"""
+
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = response.content[0].text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        parsed = json.loads(text)
+        return jsonify({'success': True, 'phone': parsed.get('phone', 'Not found')})
+    except Exception as e:
+        return jsonify({'success': False, 'phone': 'Not found'}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok', 'message': 'Rapid Fire backend is running!'})
