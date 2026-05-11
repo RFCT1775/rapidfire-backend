@@ -9,45 +9,35 @@ CORS(app, origins="*", allow_headers=["Content-Type"], methods=["GET", "POST", "
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-def search_orgs_with_claude(location, org_type):
-    city = location.split(',')[0].strip()
-    state = location.split(',')[1].strip() if ',' in location else 'CA'
+def search_category(location, city, state, category, count, exclude_names):
+    exclude_str = ""
+    if exclude_names:
+        exclude_str = f"\n\nDo NOT include any of these organizations as they have already been contacted:\n" + "\n".join(f"- {n}" for n in exclude_names)
 
-    type_filter = ""
-    if org_type == 'fire':
-        type_filter = "Focus only on fire departments, firefighter unions, locals, and benevolent associations."
-    elif org_type == 'police':
-        type_filter = "Focus only on police protective leagues, law enforcement associations, and sheriff benevolent societies."
-    elif org_type == 'ems':
-        type_filter = "Focus only on EMS unions, paramedic associations, and emergency medical services organizations."
-    elif org_type == 'veterans':
-        type_filter = "Focus only on veterans posts (VFW, American Legion), veteran service organizations, and military fraternal groups."
-    elif org_type == 'tactical':
-        type_filter = "Focus only on veteran-owned tactical training companies, firearms training groups, self-defense schools, and shooting ranges that host events and community gatherings."
+    if category == 'veterans':
+        type_desc = "veterans posts (VFW, American Legion), veteran service organizations, and military fraternal groups"
+        type_label = "Veterans group"
+    elif category == 'firstresponder':
+        type_desc = "firefighter locals/unions, police protective leagues, EMS associations, and first responder benevolent societies"
+        type_label = "varies"
+    else:  # tactical
+        type_desc = "veteran-owned tactical training companies, firearms training groups, self-defense schools, and shooting ranges that host events and community gatherings"
+        type_label = "Tactical training group"
 
     prompt = f"""You are helping find organizations in {location} that might want to book a live comedy show, guest speaker, emcee, or entertainment for their next event.
 
-List 8 real, specific organizations in or near {city}, {state} from these categories: firefighter locals/unions, police protective leagues, EMS associations, veterans posts (VFW/American Legion), and veteran-owned tactical/firearms training groups. Focus on groups that host events, parties, banquets, graduations, and social gatherings.
+List {count} real, specific {type_desc} in or near {city}, {state}. Focus on groups that host events, parties, banquets, graduations, and social gatherings.
+{exclude_str}
 
-{type_filter}
+For each organization provide:
+- Real name
+- City
+- Contact email — always an actual email, never "visit website". Prefer direct Gmail or secretary/business manager emails. Guess info@[orgname].org if needed.
+- Website if known
+- Type: use exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
 
-For each organization, provide:
-- Real name of the organization
-- City it's based in
-- A contact email — always provide an actual email address, never say "visit website". Prefer direct Gmail addresses or secretary/business manager emails you know. For unions and locals check if they have a Gmail like local112@gmail.com. If you don't know a specific one, make a reasonable guess like info@[orgname].org rather than leaving it blank.
-- Their website if you know it
-- Type: use exactly one of these: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
-
-Return ONLY a valid JSON array, no other text:
-[
-  {{
-    "name": "Organization Name",
-    "city": "{city}",
-    "contact": "contact@example.org",
-    "website": "https://example.org",
-    "type": "Fire department"
-  }}
-]"""
+Return ONLY a valid JSON array:
+[{{"name":"...","city":"{city}","contact":"...","website":"...","type":"..."}}]"""
 
     try:
         response = client.messages.create(
@@ -55,31 +45,64 @@ Return ONLY a valid JSON array, no other text:
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
-
         text = response.content[0].text.strip()
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
             text = text.split("```")[1].split("```")[0].strip()
-
         start = text.find('[')
         end = text.rfind(']') + 1
         if start >= 0 and end > start:
             text = text[start:end]
-
-        orgs = json.loads(text)
-        return orgs[:12]
-
+        return json.loads(text)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Search error for {category}: {e}")
         return []
 
-@app.route('/search', methods=['GET'])
+def search_orgs_with_claude(location, org_type, exclude_names):
+    city = location.split(',')[0].strip()
+    state = location.split(',')[1].strip() if ',' in location else 'CA'
+    results = []
+
+    if org_type == 'all':
+        veterans = search_category(location, city, state, 'veterans', 5, exclude_names)
+        results.extend(veterans)
+        first = search_category(location, city, state, 'firstresponder', 5, exclude_names)
+        results.extend(first)
+        tactical = search_category(location, city, state, 'tactical', 10, exclude_names)
+        results.extend(tactical)
+    elif org_type == 'veterans':
+        results = search_category(location, city, state, 'veterans', 10, exclude_names)
+    elif org_type == 'tactical':
+        results = search_category(location, city, state, 'tactical', 10, exclude_names)
+    else:
+        results = search_category(location, city, state, 'firstresponder', 10, exclude_names)
+
+    # Filter out any that slipped through
+    seen = set()
+    filtered = []
+    for org in results:
+        name = org.get('name', '').strip().lower()
+        if name and name not in seen and name not in [e.lower() for e in exclude_names]:
+            seen.add(name)
+            filtered.append(org)
+
+    return filtered
+
+@app.route('/search', methods=['GET', 'POST'])
 def search():
-    location = request.args.get('location', 'Los Angeles, CA')
-    org_type = request.args.get('type', 'all')
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        location = data.get('location', 'Los Angeles, CA')
+        org_type = data.get('type', 'all')
+        exclude_names = data.get('exclude', [])
+    else:
+        location = request.args.get('location', 'Los Angeles, CA')
+        org_type = request.args.get('type', 'all')
+        exclude_names = []
+
     try:
-        orgs = search_orgs_with_claude(location, org_type)
+        orgs = search_orgs_with_claude(location, org_type, exclude_names)
         return jsonify({'success': True, 'orgs': orgs})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -118,10 +141,10 @@ info@rapidfirecomedytour.org
 Key rules:
 - Do NOT say the show is free
 - Do NOT use the word "free" anywhere
-- Position it as a service worth having, not a freebie
+- Position it as a service worth having
 - Keep it under 200 words
-- Sound like a real person wrote it, not a marketing template
-- Reference their specific community naturally (firefighters, cops, veterans, tactical trainers, etc.)
+- Sound like a real person wrote it
+- Reference their specific community naturally
 
 Organization: {org_name}
 Type: {org_type}
