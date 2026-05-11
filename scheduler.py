@@ -224,10 +224,16 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
     if call_list:
         html += """<hr/><h2>📞 Call List — no email found, logged to your sheet</h2>"""
         for org in call_list:
+            phone = org.get('phone', 'Not found')
+            if phone == 'Not found':
+                search_query = urllib.parse.quote(f"{org['name']} {org['city']} phone number")
+                phone_display = f'<a href="https://www.google.com/search?q={search_query}" style="color:#ff4d00;">🔍 Find on Google</a>'
+            else:
+                phone_display = f'📞 {phone}'
             html += f"""
             <div style="border:1px solid #ffcdd2;border-radius:8px;padding:15px;margin:10px 0;background:#fff8f8;">
                 <strong>{org['name']}</strong> — {org['type']}<br/>
-                📍 {org['city']} | 📞 {org.get('phone', 'Not found')}
+                📍 {org['city']} | {phone_display}
                 {f"| <a href='{org['website']}'>Website ↗</a>" if org.get('website') else ''}
             </div>"""
 
@@ -272,7 +278,12 @@ def run_daily_job():
                 try:
                     phone = find_phone(org)
                     org["phone"] = phone
-                    log_to_sheet(org, f"Call directly: {phone}")
+                    if phone == "Not found":
+                        search_query = urllib.parse.quote(f"{org['name']} {org['city']} phone number")
+                        status = f"Call directly — google.com/search?q={search_query}"
+                    else:
+                        status = f"Call directly: {phone}"
+                    log_to_sheet(org, status)
                     call_list.append(org)
                     print(f"No email — logged for call: {org['name']} ({phone})")
                 except Exception as e:
