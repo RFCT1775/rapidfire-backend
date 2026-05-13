@@ -3,11 +3,9 @@ from flask_cors import CORS
 import anthropic
 import os
 import json
-import smtplib
 import requests
 import urllib.parse
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import threading
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -206,8 +204,9 @@ def get_current_city(records):
     return CITIES[-1]
 
 def send_digest_email(orgs_and_emails, call_list, current_city):
-    if not GMAIL_USER or not GMAIL_PASSWORD:
-        print("Gmail credentials not set")
+    sendgrid_key = os.environ.get("SENDGRID_API_KEY")
+    if not sendgrid_key:
+        print("SendGrid API key not set")
         return False
 
     html = f"""
@@ -250,18 +249,26 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
 
     html += "</body></html>"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Rapid Fire Daily Digest - {len(orgs_and_emails)} emails ready ({current_city})"
-    msg["From"] = GMAIL_USER
-    msg["To"] = "info@rapidfirecomedytour.org"
-    msg.attach(MIMEText(html, "html"))
+    payload = {
+        "personalizations": [{"to": [{"email": "info@rapidfirecomedytour.org"}]}],
+        "from": {"email": "info@rapidfirecomedytour.org", "name": "Rapid Fire Comedy Tour"},
+        "subject": f"Rapid Fire Daily Digest - {len(orgs_and_emails)} emails ready ({current_city})",
+        "content": [{"type": "text/html", "value": html}]
+    }
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(GMAIL_USER, GMAIL_PASSWORD)
-        server.sendmail(GMAIL_USER, "info@rapidfirecomedytour.org", msg.as_string())
+    response = requests.post(
+        "https://api.sendgrid.com/v3/mail/send",
+        headers={"Authorization": f"Bearer {sendgrid_key}", "Content-Type": "application/json"},
+        json=payload,
+        timeout=30
+    )
 
-    print(f"Digest sent with {len(orgs_and_emails)} emails and {len(call_list)} call leads!")
-    return True
+    if response.status_code in (200, 202):
+        print(f"Digest sent via SendGrid with {len(orgs_and_emails)} emails and {len(call_list)} call leads!")
+        return True
+    else:
+        print(f"SendGrid error: {response.status_code} - {response.text}")
+        return False
 
 import threading
 
