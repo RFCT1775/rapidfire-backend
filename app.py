@@ -16,7 +16,39 @@ SHEET_URL = os.environ.get("SHEET_URL", "")
 GMAIL_USER = os.environ.get("GMAIL_USER", "")
 GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
-CITIES = [
+HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
+
+def find_email_with_hunter(org_name, website):
+    """Use Hunter.io to find a verified email for an org"""
+    if not HUNTER_API_KEY or not website:
+        return None
+    try:
+        # Extract domain from website
+        domain = website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+        res = requests.get(
+            "https://api.hunter.io/v2/domain-search",
+            params={"domain": domain, "api_key": HUNTER_API_KEY, "limit": 1},
+            timeout=10
+        )
+        data = res.json()
+        emails = data.get("data", {}).get("emails", [])
+        if emails:
+            return emails[0].get("value")
+        # Try email finder if domain search fails
+        res2 = requests.get(
+            "https://api.hunter.io/v2/email-finder",
+            params={"domain": domain, "company": org_name, "api_key": HUNTER_API_KEY},
+            timeout=10
+        )
+        data2 = res2.json()
+        email = data2.get("data", {}).get("email")
+        score = data2.get("data", {}).get("score", 0)
+        if email and score > 50:
+            return email
+        return None
+    except Exception as e:
+        print(f"Hunter error for {org_name}: {e}")
+        return None
     "Los Angeles, CA", "Orange County, CA", "San Diego, CA",
     "Riverside, CA", "San Bernardino, CA", "Ventura, CA",
     "Sacramento, CA", "San Francisco, CA", "Fresno, CA", "Bakersfield, CA",
@@ -288,6 +320,15 @@ def run_daily_background():
 
         for org in orgs:
             has_email = org.get("contact") and org["contact"] != "No email found"
+
+            # If no email from Claude, try Hunter.io
+            if not has_email and org.get("website"):
+                hunter_email = find_email_with_hunter(org['name'], org['website'])
+                if hunter_email:
+                    org["contact"] = hunter_email
+                    has_email = True
+                    print(f"Hunter found email for {org['name']}: {hunter_email}")
+
             if has_email:
                 try:
                     email = generate_email_text(org['name'], org['type'], org['city'])
