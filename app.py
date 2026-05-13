@@ -13,28 +13,63 @@ CORS(app, origins="*", allow_headers=["Content-Type"], methods=["GET", "POST", "
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 SHEET_URL = os.environ.get("SHEET_URL", "")
-GMAIL_USER = os.environ.get("GMAIL_USER", "")
-GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
-
 HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
 
+# County rotation order
+COUNTIES = [
+    "Los Angeles County, CA",
+    "Orange County, CA",
+    "San Diego County, CA",
+    "Riverside County, CA",
+    "San Bernardino County, CA",
+    "Ventura County, CA",
+    "Santa Barbara County, CA",
+    "Kern County, CA",
+    "Sacramento County, CA",
+    "Alameda County, CA",
+    "San Francisco County, CA",
+    "Santa Clara County, CA",
+    "Fresno County, CA",
+    "Clark County, NV",
+    "Maricopa County, AZ",
+    "Multnomah County, OR",
+    "King County, WA",
+    "Denver County, CO",
+    "Dallas County, TX",
+    "Harris County, TX",
+    "Miami-Dade County, FL",
+    "Fulton County, GA",
+    "Cook County, IL",
+    "New York County, NY",
+]
+
+COUNTY_THRESHOLD = 80  # Move to next county after this many contacts
+
+def clean_text(text):
+    return text.replace('\u2014', '').replace('\u2013', '').replace(' - ', ' ').replace('--', '')
+
 def find_email_with_hunter(org_name, website):
-    """Use Hunter.io to find a verified email for an org"""
     if not HUNTER_API_KEY or not website:
         return None
     try:
-        # Extract domain from website
-        domain = website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+        domain = website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0].strip()
+        if not domain or '.' not in domain:
+            return None
+
+        # Try domain search first
         res = requests.get(
             "https://api.hunter.io/v2/domain-search",
-            params={"domain": domain, "api_key": HUNTER_API_KEY, "limit": 1},
+            params={"domain": domain, "api_key": HUNTER_API_KEY, "limit": 3},
             timeout=10
         )
         data = res.json()
         emails = data.get("data", {}).get("emails", [])
         if emails:
-            return emails[0].get("value")
-        # Try email finder if domain search fails
+            # Return highest confidence email
+            best = sorted(emails, key=lambda x: x.get("confidence", 0), reverse=True)
+            return best[0].get("value")
+
+        # Try email finder
         res2 = requests.get(
             "https://api.hunter.io/v2/email-finder",
             params={"domain": domain, "company": org_name, "api_key": HUNTER_API_KEY},
@@ -43,150 +78,12 @@ def find_email_with_hunter(org_name, website):
         data2 = res2.json()
         email = data2.get("data", {}).get("email")
         score = data2.get("data", {}).get("score", 0)
-        if email and score > 50:
+        if email and score > 40:
             return email
         return None
     except Exception as e:
         print(f"Hunter error for {org_name}: {e}")
         return None
-
-CITIES = [
-    "Los Angeles, CA", "Orange County, CA", "San Diego, CA",
-    "Riverside, CA", "San Bernardino, CA", "Ventura, CA",
-    "Sacramento, CA", "San Francisco, CA", "Fresno, CA", "Bakersfield, CA",
-    "Las Vegas, NV", "Phoenix, AZ", "Portland, OR", "Seattle, WA",
-    "Denver, CO", "Dallas, TX", "Houston, TX", "Miami, FL",
-    "Atlanta, GA", "Chicago, IL", "New York, NY",
-]
-CITY_THRESHOLD = 40
-
-def clean_text(text):
-    """Remove em-dashes and replace with regular dashes or nothing"""
-    return text.replace('\u2014', '-').replace('\u2013', '-').replace('--', '-')
-
-def search_orgs_with_claude(location, org_type, exclude_names):
-    city = location.split(',')[0].strip()
-    state = location.split(',')[1].strip() if ',' in location else 'CA'
-
-    exclude_str = ""
-    if exclude_names:
-        exclude_str = f"\n\nDo NOT include any of these already-contacted organizations:\n" + "\n".join(f"- {n}" for n in exclude_names[:50])
-
-    if org_type == 'all':
-        counts = "exactly 5 veterans groups, exactly 5 first responder groups (fire/police/EMS), exactly 5 tactical training companies, and exactly 5 executive private security companies"
-        type_desc = """Include these specific types:
-- Veterans groups: VFW posts, American Legion posts, veteran service organizations, military fraternal groups
-- First responder groups: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies
-- Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges that host community events
-- Executive private security companies: high-end security firms, executive protection companies, corporate security consultancies staffed by former military or law enforcement"""
-    elif org_type == 'veterans':
-        counts = "10 veterans groups"
-        type_desc = "Veterans groups: VFW posts, American Legion posts, veteran service organizations, military fraternal groups"
-    elif org_type == 'tactical':
-        counts = "10 tactical training companies"
-        type_desc = "Tactical training companies: veteran-owned firearms training companies, self-defense schools, tactical training groups, shooting ranges"
-    elif org_type == 'security':
-        counts = "10 executive private security companies"
-        type_desc = "Executive private security companies: high-end security firms, executive protection companies, corporate security consultancies staffed by former military or law enforcement"
-    else:
-        counts = "10 first responder organizations"
-        type_desc = "First responder groups: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies"
-
-    prompt = f"""You are helping find organizations in {location} that might want to book a live comedy show, guest speaker, emcee, or entertainment for their next event.
-
-Find {counts} in or near {city}, {state}.
-
-{type_desc}
-
-Focus on groups that host events, parties, banquets, graduations, and social gatherings.
-{exclude_str}
-
-For each organization:
-- Real name
-- City
-- Contact email: only include if confident it is real. If unsure, write "No email found"
-- Website if known
-- Type: use exactly one of: "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group", "Private security"
-
-Return ONLY a valid JSON array:
-[{{"name":"...","city":"{city}","contact":"...","website":"...","type":"..."}}]"""
-
-    try:
-        response = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = response.content[0].text.strip()
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        start = text.find('[')
-        end = text.rfind(']') + 1
-        if start >= 0 and end > start:
-            text = text[start:end]
-        orgs = json.loads(text)
-        exclude_lower = [e.lower() for e in exclude_names]
-        return [o for o in orgs if o.get('name','').lower() not in exclude_lower]
-    except Exception as e:
-        print(f"Search error: {e}")
-        return []
-
-def generate_email_text(org_name, org_type, org_city):
-    prompt = f"""Write a short, warm outreach email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
-
-The email should sound like it was typed by a real person on their phone. Short sentences. No dashes of any kind. No bullet points. Conversational and genuine.
-
-Use this as a loose guide but make it feel natural:
-
-Hi there,
-
-My name is Michael D'Angelo. I'm a Marine Corps veteran turned stand-up comedian, which honestly makes more sense than it sounds once you've spent time around Marines.
-
-I run the Rapid Fire Comedy Tour, a nonprofit that brings live stand-up comedy to first responders, military communities, and training groups. The people who deserve a good laugh more than anyone.
-
-I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. If you have an upcoming event or gathering and want someone who actually gets your world, I'd love to have a conversation.
-
-You can check out letters of recommendation from previous shows at www.rapidfirecomedytour.org.
-
-Worth a quick call?
-
-Semper Fi,
-Michael D'Angelo
-Rapid Fire Comedy Tour
-info@rapidfirecomedytour.org
-www.rapidfirecomedytour.org
-
-STRICT RULES:
-- Zero dashes of any kind. Not long ones, not short ones. Rewrite any sentence that would need one.
-- Never use the word "free"
-- Keep it under 180 words
-- Short sentences. Two to three sentences per paragraph max.
-- No filler phrases like "I hope this finds you well"
-- Sound like a text from a person, not a press release
-
-Organization: {org_name}
-Type: {org_type}
-City: {org_city}
-
-Return JSON only, no markdown:
-{{"subject": "...", "body": "..."}}"""
-
-    response = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=1000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    text = response.content[0].text.strip()
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0].strip()
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0].strip()
-    parsed = json.loads(text)
-    parsed['subject'] = clean_text(parsed['subject'])
-    parsed['body'] = clean_text(parsed['body'])
-    return parsed
 
 def find_phone_number(org_name, org_city, org_website):
     try:
@@ -227,20 +124,140 @@ def log_org_to_sheet(org, status="Contacted"):
     except Exception as e:
         print(f"Sheet log error: {e}")
 
-def get_current_city(records):
-    city_counts = {}
+def get_current_county(records):
+    county_counts = {}
     for row in records:
         city = row.get("City", "")
         if city:
-            city_counts[city] = city_counts.get(city, 0) + 1
-    for city in CITIES:
-        city_short = city.split(",")[0].strip()
-        count = sum(v for k, v in city_counts.items() if city_short.lower() in k.lower())
-        if count < CITY_THRESHOLD:
-            return city
-    return CITIES[-1]
+            county_counts[city] = county_counts.get(city, 0) + 1
 
-def send_digest_email(orgs_and_emails, call_list, current_city):
+    for county in COUNTIES:
+        county_short = county.split(",")[0].strip()
+        count = sum(v for k, v in county_counts.items() if county_short.lower() in k.lower())
+        if count < COUNTY_THRESHOLD:
+            return county
+    return COUNTIES[-1]
+
+def search_orgs_with_claude(county, org_type, exclude_names):
+    county_short = county.split(",")[0].strip()
+    state = county.split(",")[1].strip() if "," in county else "CA"
+
+    exclude_str = ""
+    if exclude_names:
+        exclude_str = "\n\nDo NOT include these already-contacted organizations:\n" + "\n".join(f"- {n}" for n in exclude_names[:60])
+
+    if org_type == 'all':
+        counts = "exactly 10 veterans/military groups, exactly 10 first responder groups, exactly 10 tactical training companies, and exactly 10 executive private security companies"
+        type_desc = """Types to find:
+- Veterans/military: VFW posts, American Legion posts, Marine Corps League, DAV chapters, veteran service organizations
+- First responders: firefighter locals/unions, police protective leagues, sheriff associations, EMS unions, benevolent societies
+- Tactical training: veteran-owned firearms training, self-defense schools, shooting ranges, tactical training companies
+- Executive private security: executive protection firms, corporate security consultancies, high-end security companies staffed by former military or law enforcement"""
+    elif org_type == 'veterans':
+        counts = "20 veterans and military organizations"
+        type_desc = "Veterans/military groups: VFW posts, American Legion posts, Marine Corps League, DAV chapters, veteran service organizations"
+    elif org_type == 'tactical':
+        counts = "20 tactical training companies"
+        type_desc = "Tactical training: veteran-owned firearms training companies, self-defense schools, shooting ranges"
+    elif org_type == 'security':
+        counts = "20 executive private security companies"
+        type_desc = "Executive private security: executive protection firms, corporate security consultancies staffed by former military or law enforcement"
+    else:
+        counts = "20 first responder organizations"
+        type_desc = "First responders: firefighter locals/unions, police protective leagues, EMS associations, benevolent societies"
+
+    prompt = f"""Find {counts} in {county_short}, {state}.
+
+{type_desc}
+
+Focus on groups that host events, banquets, parties, graduations, and social gatherings.
+{exclude_str}
+
+For each organization provide:
+- name: exact organization name
+- city: city within {county_short}
+- contact: ONLY include if you are confident it is a real working email. Otherwise write "No email found". Do not guess.
+- website: their website URL if you know it
+- type: exactly one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group", "Private security"
+
+Return ONLY a valid JSON array:
+[{{"name":"...","city":"...","contact":"...","website":"...","type":"..."}}]"""
+
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=5000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = response.content[0].text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        start = text.find('[')
+        end = text.rfind(']') + 1
+        if start >= 0 and end > start:
+            text = text[start:end]
+        orgs = json.loads(text)
+        exclude_lower = [e.lower() for e in exclude_names]
+        return [o for o in orgs if o.get('name','').lower() not in exclude_lower]
+    except Exception as e:
+        print(f"Search error: {e}")
+        return []
+
+def generate_email_text(org_name, org_type, org_city):
+    prompt = f"""Write a short outreach email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
+
+Sound like a real person texting from their phone. Short sentences. No dashes of any kind. Conversational and genuine. Get to the point fast.
+
+Hi there,
+
+My name is Michael D'Angelo. I'm a Marine Corps veteran turned stand-up comedian, which makes more sense than it sounds once you've spent time around Marines.
+
+I run the Rapid Fire Comedy Tour, a nonprofit that brings live stand-up comedy to first responders, military communities, and training groups. The people who deserve a good laugh more than anyone.
+
+I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. If you have an upcoming event and want someone who actually gets your world, I'd love to talk.
+
+You can check out letters of recommendation from previous shows at www.rapidfirecomedytour.org.
+
+Worth a quick call?
+
+Semper Fi,
+Michael D'Angelo
+Rapid Fire Comedy Tour
+info@rapidfirecomedytour.org
+www.rapidfirecomedytour.org
+
+RULES:
+- Zero dashes. Not long ones, not short ones. Rewrite any sentence that needs one.
+- Never use the word "free"
+- Under 180 words
+- Two to three short sentences per paragraph max
+- No filler like "I hope this finds you well"
+- Reference their specific community naturally
+
+Organization: {org_name}
+Type: {org_type}
+City: {org_city}
+
+Return JSON only: {{"subject": "...", "body": "..."}}"""
+
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    text = response.content[0].text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    parsed = json.loads(text)
+    parsed['subject'] = clean_text(parsed['subject'])
+    parsed['body'] = clean_text(parsed['body'])
+    return parsed
+
+def send_digest_email(orgs_and_emails, call_list, current_county):
     sendgrid_key = os.environ.get("SENDGRID_API_KEY")
     if not sendgrid_key:
         print("SendGrid API key not set")
@@ -249,27 +266,28 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
     html = f"""
     <html><body style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;">
     <h1 style="color:#ff4d00;">Rapid Fire Daily Outreach Digest</h1>
-    <p style="color:#666;">Date: {datetime.now().strftime("%B %d, %Y")} | City: {current_city}</p>
-    <p>Emails ready to send: {len(orgs_and_emails)} | Orgs to call: {len(call_list)}</p>
+    <p style="color:#666;">Date: {datetime.now().strftime("%B %d, %Y")} | County: {current_county}</p>
+    <p>Emails ready: {len(orgs_and_emails)} | Call list: {len(call_list)}</p>
     <hr/>
-    <h2>Emails - click to open in Gmail and send</h2>"""
+    <h2>Emails</h2>"""
 
     for i, (org, email) in enumerate(orgs_and_emails):
         contact = org.get("contact", "")
         subject = urllib.parse.quote(email["subject"])
         body = urllib.parse.quote(email["body"])
         gmail_link = f'<a href="https://mail.google.com/mail/?view=cm&fs=1&to={contact}&su={subject}&body={body}&from=info@rapidfirecomedytour.org" style="background:#ff4d00;color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:bold;">Open in Gmail</a>'
+        verified = ' <span style="color:#22c55e;font-size:11px;">Hunter verified</span>' if org.get("hunter_verified") else ''
         html += f"""
         <div style="border:1px solid #ddd;border-radius:8px;padding:20px;margin:15px 0;">
-            <h3 style="margin:0 0 8px 0;">{i+1}. {org['name']}</h3>
-            <p style="color:#666;margin:0 0 10px 0;">Location: {org['city']} | Type: {org['type']} | Email: {contact}</p>
+            <h3 style="margin:0 0 8px 0;">{i+1}. {org['name']}{verified}</h3>
+            <p style="color:#666;margin:0 0 10px 0;">{org['city']} | {org['type']} | {contact}</p>
             <p><strong>Subject:</strong> {email['subject']}</p>
             <div style="background:#f9f9f9;padding:15px;border-radius:6px;white-space:pre-wrap;font-size:14px;margin:10px 0;">{email['body']}</div>
             <div style="margin-top:12px;">{gmail_link}</div>
         </div>"""
 
     if call_list:
-        html += "<hr/><h2>Call List - no email found</h2>"
+        html += "<hr/><h2>Call List</h2>"
         for org in call_list:
             phone = org.get("phone", "Not found")
             if phone == "Not found":
@@ -280,7 +298,7 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
             html += f"""
             <div style="border:1px solid #ffcdd2;border-radius:8px;padding:15px;margin:10px 0;background:#fff8f8;">
                 <strong>{org['name']}</strong> - {org['type']}<br/>
-                Location: {org['city']} | {phone_display}
+                {org['city']} | {phone_display}
                 {f'| <a href="{org["website"]}">Website</a>' if org.get('website') else ''}
             </div>"""
 
@@ -289,7 +307,7 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
     payload = {
         "personalizations": [{"to": [{"email": "info@rapidfirecomedytour.org"}]}],
         "from": {"email": "info@rapidfirecomedytour.org", "name": "Rapid Fire Comedy Tour"},
-        "subject": f"Rapid Fire Daily Digest - {len(orgs_and_emails)} emails ready ({current_city})",
+        "subject": f"Rapid Fire Daily Digest - {len(orgs_and_emails)} emails ready ({current_county})",
         "content": [{"type": "text/html", "value": html}]
     }
 
@@ -301,45 +319,44 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
     )
 
     if response.status_code in (200, 202):
-        print(f"Digest sent via SendGrid with {len(orgs_and_emails)} emails and {len(call_list)} call leads!")
+        print(f"Digest sent! Emails: {len(orgs_and_emails)} | Calls: {len(call_list)}")
         return True
     else:
         print(f"SendGrid error: {response.status_code} - {response.text}")
         return False
 
-import threading
-
 def run_daily_background():
     try:
         print(f"Starting daily job at {datetime.now()}")
         records = get_sheet_data()
-        current_city = get_current_city(records)
+        current_county = get_current_county(records)
         contacted_names = [r.get("Organization", "") for r in records if r.get("Organization")]
-        print(f"City: {current_city} | Contacted: {len(contacted_names)}")
+        print(f"County: {current_county} | Contacted: {len(contacted_names)}")
 
-        orgs = search_orgs_with_claude(current_city, 'all', contacted_names)
+        orgs = search_orgs_with_claude(current_county, 'all', contacted_names)
         print(f"Found {len(orgs)} new orgs")
 
         orgs_and_emails = []
         call_list = []
 
         for org in orgs:
-            has_email = org.get("contact") and org["contact"] != "No email found"
-
-            # If no email from Claude, try Hunter.io
-            if not has_email and org.get("website"):
+            # Step 1: Try Hunter FIRST on every org with a website
+            hunter_email = None
+            if org.get("website"):
                 hunter_email = find_email_with_hunter(org['name'], org['website'])
                 if hunter_email:
                     org["contact"] = hunter_email
-                    has_email = True
-                    print(f"Hunter found email for {org['name']}: {hunter_email}")
+                    org["hunter_verified"] = True
+                    print(f"Hunter found: {org['name']} -> {hunter_email}")
+
+            has_email = org.get("contact") and org["contact"] != "No email found"
 
             if has_email:
                 try:
                     email = generate_email_text(org['name'], org['type'], org['city'])
                     log_org_to_sheet(org, "Contacted")
                     orgs_and_emails.append((org, email))
-                    print(f"Email generated: {org['name']}")
+                    print(f"Email ready: {org['name']}")
                 except Exception as e:
                     print(f"Email error for {org['name']}: {e}")
             else:
@@ -353,11 +370,11 @@ def run_daily_background():
                         status = f"Call directly: {phone}"
                     log_org_to_sheet(org, status)
                     call_list.append(org)
-                    print(f"Call logged: {org['name']} ({phone})")
+                    print(f"Call list: {org['name']} ({phone})")
                 except Exception as e:
-                    print(f"Call log error for {org['name']}: {e}")
+                    print(f"Call log error: {e}")
 
-        send_digest_email(orgs_and_emails, call_list, current_city)
+        send_digest_email(orgs_and_emails, call_list, current_county)
         print("Daily job complete!")
 
     except Exception as e:
@@ -369,6 +386,62 @@ def run_daily():
     thread.daemon = True
     thread.start()
     return jsonify({'success': True, 'message': 'Daily job started in background'})
+
+@app.route('/rehunt', methods=['GET', 'POST'])
+def rehunt():
+    def rehunt_background():
+        try:
+            records = get_sheet_data()
+            updated = 0
+            skipped = 0
+            limit = 45  # Leave buffer under 50/month
+
+            for row in records:
+                if updated >= limit:
+                    print(f"Hit Hunter limit of {limit}. Skipped {skipped} remaining.")
+                    break
+
+                status = row.get("Status", "")
+                website = row.get("Website", "")
+                name = row.get("Organization", "")
+                current_email = row.get("Email", "")
+
+                needs_email = (
+                    not current_email or
+                    current_email == "No email found" or
+                    "Bounced" in status or
+                    "Call directly" in status
+                )
+
+                if needs_email and website:
+                    hunter_email = find_email_with_hunter(name, website)
+                    if hunter_email:
+                        try:
+                            requests.post(SHEET_URL, json={
+                                "name": name,
+                                "type": row.get("Type", ""),
+                                "city": row.get("City", ""),
+                                "contact": hunter_email,
+                                "website": website,
+                                "status": "Email found via Hunter"
+                            }, timeout=15)
+                            print(f"Hunter updated: {name} -> {hunter_email}")
+                            updated += 1
+                        except Exception as e:
+                            print(f"Sheet update error: {e}")
+                    else:
+                        skipped += 1
+                else:
+                    skipped += 1
+
+            print(f"Rehunt complete. Updated: {updated} | Skipped: {skipped}")
+        except Exception as e:
+            print(f"Rehunt error: {e}")
+
+    thread = threading.Thread(target=rehunt_background)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'success': True, 'message': 'Hunter re-scrape started in background'})
 
 @app.route('/search', methods=['GET', 'POST'])
 def search():
@@ -404,64 +477,6 @@ def find_phone():
         return jsonify({'success': True, 'phone': phone})
     except Exception as e:
         return jsonify({'success': False, 'phone': 'Not found'}), 500
-
-@app.route('/rehunt', methods=['GET', 'POST'])
-def rehunt():
-    """Re-run Hunter.io on orgs that have no email or bounced, up to 40 at a time"""
-    def rehunt_background():
-        try:
-            records = get_sheet_data()
-            updated = 0
-            skipped = 0
-
-            for row in records:
-                if updated >= 40:
-                    print(f"Hit 40 Hunter limit, stopping. Skipped {skipped} remaining.")
-                    break
-
-                status = row.get("Status", "")
-                website = row.get("Website", "")
-                name = row.get("Organization", "")
-                current_email = row.get("Email", "")
-
-                # Only process rows that need a better email
-                needs_email = (
-                    not current_email or
-                    current_email == "No email found" or
-                    "Bounced" in status or
-                    "Call directly" in status
-                )
-
-                if needs_email and website:
-                    hunter_email = find_email_with_hunter(name, website)
-                    if hunter_email:
-                        # Update sheet via Apps Script
-                        try:
-                            requests.post(SHEET_URL, json={
-                                "name": name,
-                                "type": row.get("Type", ""),
-                                "city": row.get("City", ""),
-                                "contact": hunter_email,
-                                "website": website,
-                                "status": "Email found via Hunter"
-                            }, timeout=15)
-                            print(f"Hunter updated: {name} -> {hunter_email}")
-                            updated += 1
-                        except Exception as e:
-                            print(f"Sheet update error for {name}: {e}")
-                    else:
-                        skipped += 1
-                        print(f"No Hunter result for: {name}")
-
-            print(f"Rehunt complete. Updated: {updated} | No result: {skipped}")
-
-        except Exception as e:
-            print(f"Rehunt error: {e}")
-
-    thread = threading.Thread(target=rehunt_background)
-    thread.daemon = True
-    thread.start()
-    return jsonify({'success': True, 'message': 'Hunter re-scrape started in background. Check your sheet in a few minutes.'})
 
 @app.route('/health', methods=['GET'])
 def health():
