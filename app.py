@@ -263,8 +263,9 @@ def send_digest_email(orgs_and_emails, call_list, current_city):
     print(f"Digest sent with {len(orgs_and_emails)} emails and {len(call_list)} call leads!")
     return True
 
-@app.route('/run-daily', methods=['POST', 'GET'])
-def run_daily():
+import threading
+
+def run_daily_background():
     try:
         print(f"Starting daily job at {datetime.now()}")
         records = get_sheet_data()
@@ -304,11 +305,17 @@ def run_daily():
                     print(f"Call log error for {org['name']}: {e}")
 
         send_digest_email(orgs_and_emails, call_list, current_city)
-        return jsonify({'success': True, 'emails': len(orgs_and_emails), 'calls': len(call_list), 'city': current_city})
+        print("Daily job complete!")
 
     except Exception as e:
         print(f"Daily job error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/run-daily', methods=['POST', 'GET'])
+def run_daily():
+    thread = threading.Thread(target=run_daily_background)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'success': True, 'message': 'Daily job started in background'})
 
 @app.route('/search', methods=['GET', 'POST'])
 def search():
