@@ -109,10 +109,15 @@ def get_sheet_data():
     try:
         res = requests.get(SHEET_URL, timeout=15)
         data = res.json()
-        return data.get("records", [])
+        return data  # Return full response including replies
     except Exception as e:
         print(f"Error getting sheet data: {e}")
-        return []
+        return {"records": [], "replies": []}
+
+def get_records(data):
+    if isinstance(data, list):
+        return data
+    return data.get("records", [])
 
 def log_org_to_sheet(org, status="Contacted"):
     try:
@@ -124,7 +129,11 @@ def log_org_to_sheet(org, status="Contacted"):
     except Exception as e:
         print(f"Sheet log error: {e}")
 
-def get_current_county(records):
+def get_current_county(records_or_data):
+    if isinstance(records_or_data, dict):
+        records = records_or_data.get("records", [])
+    else:
+        records = records_or_data
     county_counts = {}
     for row in records:
         city = row.get("City", "")
@@ -257,7 +266,7 @@ Return JSON only: {{"subject": "...", "body": "..."}}"""
     parsed['body'] = clean_text(parsed['body'])
     return parsed
 
-def send_digest_email(orgs_and_emails, call_list, current_county):
+def send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts=[]):
     sendgrid_key = os.environ.get("SENDGRID_API_KEY")
     if not sendgrid_key:
         print("SendGrid API key not set")
@@ -267,9 +276,32 @@ def send_digest_email(orgs_and_emails, call_list, current_county):
     <html><body style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;">
     <h1 style="color:#ff4d00;">Rapid Fire Daily Outreach Digest</h1>
     <p style="color:#666;">Date: {datetime.now().strftime("%B %d, %Y")} | County: {current_county}</p>
-    <p>Emails ready: {len(orgs_and_emails)} | Call list: {len(call_list)}</p>
-    <hr/>
-    <h2>Emails</h2>"""
+    <p>Emails ready: {len(orgs_and_emails)} | Call list: {len(call_list)} | Replies to action: {len(reply_drafts)}</p>"""
+
+    # Reply drafts section FIRST - most important
+    if reply_drafts:
+        html += """<hr/><h2 style="color:#22c55e;">Replies to Action</h2>"""
+        for rd in reply_drafts:
+            is_followup = rd['status'] == 'Follow-up needed'
+            label = "Follow-up Needed" if is_followup else "New Reply"
+            color = "#ff9800" if is_followup else "#22c55e"
+            subject = urllib.parse.quote(rd['draft']['subject'])
+            body = urllib.parse.quote(rd['draft']['body'])
+            gmail_link = f'<a href="https://mail.google.com/mail/?view=cm&fs=1&to={rd["their_email"]}&su={subject}&body={body}&from=info@rapidfirecomedytour.org" style="background:#22c55e;color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:bold;">Reply in Gmail</a>'
+            html += f"""
+            <div style="border:2px solid {color};border-radius:8px;padding:20px;margin:15px 0;background:#f0fff4;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <h3 style="margin:0;">{rd['org']}</h3>
+                    <span style="background:{color};color:white;padding:3px 10px;border-radius:20px;font-size:12px;">{label}</span>
+                </div>
+                <p style="color:#666;font-size:13px;margin:0 0 10px 0;">Their reply: <em>"{rd['reply_content'][:200]}..."</em></p>
+                {'<p style="color:#ff9800;font-size:13px;">Follow-up was due: ' + rd['follow_up_date'] + '</p>' if is_followup else ''}
+                <p><strong>Subject:</strong> {rd['draft']['subject']}</p>
+                <div style="background:#f9f9f9;padding:15px;border-radius:6px;white-space:pre-wrap;font-size:14px;margin:10px 0;">{rd['draft']['body']}</div>
+                <div style="margin-top:12px;">{gmail_link}</div>
+            </div>"""
+
+    html += "<hr/><h2>New Outreach Emails</h2>"
 
     for i, (org, email) in enumerate(orgs_and_emails):
         contact = org.get("contact", "")
@@ -325,13 +357,104 @@ def send_digest_email(orgs_and_emails, call_list, current_county):
         print(f"SendGrid error: {response.status_code} - {response.text}")
         return False
 
-def run_daily_background():
+def get_reply_drafts(records_data):
+    """Get replies that need follow-up drafts from the Replies sheet"""
+    replies = records_data.get("replies", [])
+    drafts = []
+    
+    for reply in replies:
+        status = reply.get("status", "")
+        if status not in ["New Reply", "Follow-up needed"]:
+            continue
+            
+        org_name = reply.get("Organization", "")
+        their_email = reply.get("Their Email", "") or reply.get("email", "")
+        reply_content = reply.get("Reply Content", "") or reply.get("reply content", "")
+        follow_up_date = reply.get("Follow-up Date", "") or reply.get("follow up date", "")
+        
+        if not org_name or not reply_content:
+            continue
+            
+        try:
+            is_followup = status == "Follow-up needed"
+            draft = generate_reply_draft(org_name, reply_content, their_email, is_followup, follow_up_date)
+            drafts.append({
+                "org": org_name,
+                "their_email": their_email,
+                "reply_content": reply_content,
+                "follow_up_date": follow_up_date,
+                "status": status,
+                "draft": draft
+            })
+            print(f"Reply draft generated for: {org_name}")
+        except Exception as e:
+            print(f"Reply draft error for {org_name}: {e}")
+    
+    return drafts
+
+def generate_reply_draft(org_name, their_reply, their_email, is_followup=False, follow_up_date=""):
+    if is_followup:
+        prompt = f"""Write a gentle follow-up email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
+
+Context: {org_name} replied to our outreach and expressed interest. We were supposed to hear back from them by {follow_up_date} but haven't yet.
+
+Their original reply was: "{their_reply}"
+
+Write a short, friendly follow-up that:
+- References their previous reply naturally
+- Is warm but not pushy
+- Asks if they had a chance to think about it
+- Keeps the door open
+- Sounds like a real person, not a sales email
+- Under 100 words
+- No dashes of any kind
+
+Return JSON only: {{"subject": "...", "body": "..."}}"""
+    else:
+        prompt = f"""Write a reply email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
+
+Someone from {org_name} replied to our outreach email. Here's what they said:
+"{their_reply}"
+
+Write a response that:
+- Acknowledges exactly what they said proportionally
+- Is warm and genuine
+- If they mentioned a specific event or timeframe, acknowledge it without being pushy
+- If they said they'll reach out after an event, say something supportive and leave the ball in their court
+- If they asked a question, answer it directly
+- Keeps it short, under 120 words
+- No dashes of any kind
+- Sounds like a real person
+
+Return JSON only: {{"subject": "...", "body": "..."}}"""
+
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    text = response.content[0].text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    parsed = json.loads(text)
+    parsed['subject'] = clean_text(parsed['subject'])
+    parsed['body'] = clean_text(parsed['body'])
+    return parsed
     try:
         print(f"Starting daily job at {datetime.now()}")
-        records = get_sheet_data()
+        records_data = get_sheet_data()
+        records = records_data if isinstance(records_data, list) else records_data.get("records", [])
         current_county = get_current_county(records)
         contacted_names = [r.get("Organization", "") for r in records if r.get("Organization")]
         print(f"County: {current_county} | Contacted: {len(contacted_names)}")
+
+        # Get reply drafts
+        reply_drafts = []
+        if isinstance(records_data, dict):
+            reply_drafts = get_reply_drafts(records_data)
+            print(f"Reply drafts: {len(reply_drafts)}")
 
         orgs = search_orgs_with_claude(current_county, 'all', contacted_names)
         print(f"Found {len(orgs)} new orgs")
@@ -374,7 +497,7 @@ def run_daily_background():
                 except Exception as e:
                     print(f"Call log error: {e}")
 
-        send_digest_email(orgs_and_emails, call_list, current_county)
+        send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts)
         print("Daily job complete!")
 
     except Exception as e:
@@ -391,7 +514,8 @@ def run_daily():
 def rehunt():
     def rehunt_background():
         try:
-            records = get_sheet_data()
+            records_data = get_sheet_data()
+            records = records_data.get("records", []) if isinstance(records_data, dict) else records_data
             updated = 0
             skipped = 0
             limit = 45  # Leave buffer under 50/month
