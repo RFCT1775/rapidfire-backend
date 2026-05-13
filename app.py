@@ -442,6 +442,8 @@ Return JSON only: {{"subject": "...", "body": "..."}}"""
     parsed['subject'] = clean_text(parsed['subject'])
     parsed['body'] = clean_text(parsed['body'])
     return parsed
+
+def run_daily_background():
     try:
         print(f"Starting daily job at {datetime.now()}")
         records_data = get_sheet_data()
