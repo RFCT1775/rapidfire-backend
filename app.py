@@ -134,34 +134,37 @@ Return ONLY a valid JSON array:
         return []
 
 def generate_email_text(org_name, org_type, org_city):
-    prompt = f"""Write a warm, personal outreach email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
+    prompt = f"""Write a short, warm outreach email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
 
-Use this as your guide but personalize it for the specific org:
+The email should sound like it was typed by a real person on their phone. Short sentences. No dashes of any kind. No bullet points. Conversational and genuine.
+
+Use this as a loose guide but make it feel natural:
 
 Hi there,
 
-My name is Michael D'Angelo. I'm a Marine Corps machine gunner turned stand-up comedian, which is probably the only career change that makes less sense than it sounds.
+My name is Michael D'Angelo. I'm a Marine Corps veteran turned stand-up comedian, which honestly makes more sense than it sounds once you've spent time around Marines.
 
-I started the Rapid Fire Comedy Tour to bring live comedy to the people who spend their days running toward danger. First responders, military, training communities - the folks who deserve a good laugh more than anyone.
+I run the Rapid Fire Comedy Tour, a nonprofit that brings live stand-up comedy to first responders, military communities, and training groups. The people who deserve a good laugh more than anyone.
 
-I'd love to bring a show to [ORG NAME]. I book comedians for events across the country, and there's something special about making a room full of [THEIR COMMUNITY] laugh. I'm also available as a guest speaker or emcee for banquets, graduations, award ceremonies, or any event where you want someone who actually gets your world.
+I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. If you have an upcoming event or gathering and want someone who actually gets your world, I'd love to have a conversation.
 
-If you have an upcoming event, holiday party, or awards banquet, I'd love to have a conversation about making it memorable. You can visit www.rapidfirecomedytour.org to read letters of recommendation from previous shows.
+You can check out letters of recommendation from previous shows at www.rapidfirecomedytour.org.
 
-Worth a conversation?
+Worth a quick call?
 
 Semper Fi,
 Michael D'Angelo
-Founder, Rapid Fire Comedy Tour
+Rapid Fire Comedy Tour
 info@rapidfirecomedytour.org
 www.rapidfirecomedytour.org
 
 STRICT RULES:
-- Never use em-dashes (the long dash like this: -). Use a regular hyphen or rewrite the sentence instead.
+- Zero dashes of any kind. Not long ones, not short ones. Rewrite any sentence that would need one.
 - Never use the word "free"
-- Keep it under 200 words
-- Write like a real person, not a marketer
-- Reference their specific community naturally
+- Keep it under 180 words
+- Short sentences. Two to three sentences per paragraph max.
+- No filler phrases like "I hope this finds you well"
+- Sound like a text from a person, not a press release
 
 Organization: {org_name}
 Type: {org_type}
@@ -401,6 +404,64 @@ def find_phone():
         return jsonify({'success': True, 'phone': phone})
     except Exception as e:
         return jsonify({'success': False, 'phone': 'Not found'}), 500
+
+@app.route('/rehunt', methods=['GET', 'POST'])
+def rehunt():
+    """Re-run Hunter.io on orgs that have no email or bounced, up to 40 at a time"""
+    def rehunt_background():
+        try:
+            records = get_sheet_data()
+            updated = 0
+            skipped = 0
+
+            for row in records:
+                if updated >= 40:
+                    print(f"Hit 40 Hunter limit, stopping. Skipped {skipped} remaining.")
+                    break
+
+                status = row.get("Status", "")
+                website = row.get("Website", "")
+                name = row.get("Organization", "")
+                current_email = row.get("Email", "")
+
+                # Only process rows that need a better email
+                needs_email = (
+                    not current_email or
+                    current_email == "No email found" or
+                    "Bounced" in status or
+                    "Call directly" in status
+                )
+
+                if needs_email and website:
+                    hunter_email = find_email_with_hunter(name, website)
+                    if hunter_email:
+                        # Update sheet via Apps Script
+                        try:
+                            requests.post(SHEET_URL, json={
+                                "name": name,
+                                "type": row.get("Type", ""),
+                                "city": row.get("City", ""),
+                                "contact": hunter_email,
+                                "website": website,
+                                "status": "Email found via Hunter"
+                            }, timeout=15)
+                            print(f"Hunter updated: {name} -> {hunter_email}")
+                            updated += 1
+                        except Exception as e:
+                            print(f"Sheet update error for {name}: {e}")
+                    else:
+                        skipped += 1
+                        print(f"No Hunter result for: {name}")
+
+            print(f"Rehunt complete. Updated: {updated} | No result: {skipped}")
+
+        except Exception as e:
+            print(f"Rehunt error: {e}")
+
+    thread = threading.Thread(target=rehunt_background)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'success': True, 'message': 'Hunter re-scrape started in background. Check your sheet in a few minutes.'})
 
 @app.route('/health', methods=['GET'])
 def health():
