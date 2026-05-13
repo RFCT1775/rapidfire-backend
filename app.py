@@ -49,6 +49,8 @@ def find_email_with_hunter(org_name, website):
     except Exception as e:
         print(f"Hunter error for {org_name}: {e}")
         return None
+
+CITIES = [
     "Los Angeles, CA", "Orange County, CA", "San Diego, CA",
     "Riverside, CA", "San Bernardino, CA", "Ventura, CA",
     "Sacramento, CA", "San Francisco, CA", "Fresno, CA", "Bakersfield, CA",
