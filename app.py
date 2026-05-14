@@ -604,6 +604,53 @@ def find_phone():
     except Exception as e:
         return jsonify({'success': False, 'phone': 'Not found'}), 500
 
+@app.route('/cleanup', methods=['GET', 'POST'])
+def cleanup():
+    def cleanup_background():
+        try:
+            data = get_sheet_data()
+            records = data.get("records", []) if isinstance(data, dict) else data
+            killed = 0
+            for row in records:
+                website = str(row.get("Website", "") or "").strip()
+                status = str(row.get("Status", "") or "").strip()
+                name = row.get("Organization", "")
+
+                # Skip already dead or booked
+                if "Dead" in status or "Booked" in status or "Replied" in status:
+                    continue
+
+                # Kill if no website or bad website
+                bad_website = (
+                    not website or
+                    website in ["No website found", "None", "N/A", "no website found"] or
+                    not website.startswith("http")
+                )
+
+                if bad_website and name:
+                    try:
+                        requests.post(SHEET_URL, json={
+                            "name": name,
+                            "type": row.get("Type", ""),
+                            "city": row.get("City", ""),
+                            "contact": row.get("Email", ""),
+                            "website": website,
+                            "status": "Dead - no website"
+                        }, timeout=15)
+                        killed += 1
+                        print(f"Killed (no website): {name}")
+                    except Exception as e:
+                        print(f"Error killing {name}: {e}")
+
+            print(f"Cleanup complete. Killed {killed} orgs with no website.")
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
+    thread = threading.Thread(target=cleanup_background)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'success': True, 'message': 'Cleanup started — removing orgs with no website.'})
+
 @app.route('/dashboard-data', methods=['GET'])
 def dashboard_data():
     try:
