@@ -591,6 +591,81 @@ def find_phone():
     except Exception as e:
         return jsonify({'success': False, 'phone': 'Not found'}), 500
 
+@app.route('/dashboard-data', methods=['GET'])
+def dashboard_data():
+    try:
+        data = get_sheet_data()
+        records = data.get("records", []) if isinstance(data, dict) else data
+        
+        total = len(records)
+        contacted = sum(1 for r in records if r.get("Status") == "Contacted")
+        bounced = sum(1 for r in records if "Bounced" in str(r.get("Status", "")))
+        replied = sum(1 for r in records if "Replied" in str(r.get("Status", "")))
+        follow_up_needed = sum(1 for r in records if "Follow-up needed" in str(r.get("Status", "")))
+        call_only = sum(1 for r in records if "Call directly" in str(r.get("Status", "")))
+        
+        # Orgs that need to be contacted (call list with phone/website)
+        need_contact = []
+        for r in records:
+            status = str(r.get("Status", ""))
+            if "Call directly" in status or "Bounced" in status:
+                need_contact.append({
+                    "name": r.get("Organization", ""),
+                    "type": r.get("Type", ""),
+                    "city": r.get("City", ""),
+                    "email": r.get("Email", ""),
+                    "website": r.get("Website", ""),
+                    "status": status,
+                    "date_contacted": r.get("Date Contacted", ""),
+                    "follow_up_date": r.get("Follow-up Date", "")
+                })
+
+        # Recent replies
+        replies = []
+        for r in records:
+            status = str(r.get("Status", ""))
+            if "Replied" in status or "Follow-up" in status:
+                replies.append({
+                    "name": r.get("Organization", ""),
+                    "email": r.get("Email", ""),
+                    "status": status,
+                    "reply_content": r.get("Reply Content", ""),
+                    "follow_up_date": r.get("Follow-up Date", "")
+                })
+
+        return jsonify({
+            "success": True,
+            "stats": {
+                "total": total,
+                "contacted": contacted,
+                "bounced": bounced,
+                "replied": replied,
+                "follow_up_needed": follow_up_needed,
+                "call_only": call_only
+            },
+            "need_contact": need_contact,
+            "replies": replies,
+            "records": records
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/update-contact', methods=['POST'])
+def update_contact():
+    try:
+        data = request.get_json()
+        requests.post(SHEET_URL, json={
+            "name": data.get("name"),
+            "type": data.get("type", ""),
+            "city": data.get("city", ""),
+            "contact": data.get("email", ""),
+            "website": data.get("website", ""),
+            "status": data.get("status", "Contacted")
+        }, timeout=15)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok', 'message': 'Rapid Fire backend is running!'})
