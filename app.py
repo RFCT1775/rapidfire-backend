@@ -394,43 +394,30 @@ def get_reply_drafts(records_data):
 
 def generate_reply_draft(org_name, their_reply, their_email, is_followup=False, follow_up_date=""):
     if is_followup:
-        prompt = f"""Write a gentle follow-up email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
+        prompt = f"""Write a very short follow-up email from Michael D'Angelo, Rapid Fire Comedy Tour.
 
-Context: {org_name} replied to our outreach and expressed interest. We were supposed to hear back from them by {follow_up_date} but haven't yet.
+Context: {org_name} replied interested but we haven't heard back. Follow-up was due {follow_up_date}.
+Their original reply: "{their_reply}"
 
-Their original reply was: "{their_reply}"
-
-Write a short, friendly follow-up that:
-- References their previous reply naturally
-- Is warm but not pushy
-- Asks if they had a chance to think about it
-- Keeps the door open
-- Sounds like a real person, not a sales email
-- Under 100 words
-- No dashes of any kind
+Write 3-4 sentences max. Warm, not pushy. Reference what they said. Ask if they had a chance to think about it.
+No dashes. No filler. Sound like a real person.
 
 Return JSON only: {{"subject": "...", "body": "..."}}"""
     else:
-        prompt = f"""Write a reply email from Michael D'Angelo, founder of Rapid Fire Comedy Tour.
+        prompt = f"""Write a very short reply email from Michael D'Angelo, Rapid Fire Comedy Tour.
 
-Someone from {org_name} replied to our outreach email. Here's what they said:
-"{their_reply}"
+They said: "{their_reply}"
 
-Write a response that:
-- Acknowledges exactly what they said proportionally
-- Is warm and genuine
-- If they mentioned a specific event or timeframe, acknowledge it without being pushy
-- If they said they'll reach out after an event, say something supportive and leave the ball in their court
-- If they asked a question, answer it directly
-- Keeps it short, under 120 words
-- No dashes of any kind
-- Sounds like a real person
+Write 3-4 sentences max. Respond proportionally to exactly what they said. 
+If they mentioned a future event, acknowledge it and leave the ball in their court.
+If they asked a question, answer it directly.
+Warm but brief. No dashes. No filler.
 
 Return JSON only: {{"subject": "...", "body": "..."}}"""
 
     response = client.messages.create(
         model="claude-opus-4-5",
-        max_tokens=500,
+        max_tokens=300,
         messages=[{"role": "user", "content": prompt}]
     )
     text = response.content[0].text.strip()
