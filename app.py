@@ -182,11 +182,17 @@ def search_orgs_with_claude(county, org_type, exclude_names):
 Focus on groups that host events, banquets, parties, graduations, and social gatherings.
 {exclude_str}
 
+CRITICAL RULES:
+- ONLY include organizations that have a real, known website URL. If you don't know their website, skip them entirely.
+- Do NOT include organizations with no web presence.
+- Do NOT make up or guess website URLs.
+- Quality over quantity — fewer real results is better than more fake ones.
+
 For each organization provide:
 - name: exact organization name
 - city: city within {county_short}
 - contact: ONLY include if you are confident it is a real working email. Otherwise write "No email found". Do not guess.
-- website: their website URL if you know it
+- website: their actual website URL. If you don't know it for certain, do not include this org.
 - type: exactly one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group", "Private security"
 
 Return ONLY a valid JSON array:
@@ -209,7 +215,14 @@ Return ONLY a valid JSON array:
             text = text[start:end]
         orgs = json.loads(text)
         exclude_lower = [e.lower() for e in exclude_names]
-        return [o for o in orgs if o.get('name','').lower() not in exclude_lower]
+        # Filter out any orgs without a real website
+        filtered = [o for o in orgs if 
+                   o.get('name','').lower() not in exclude_lower and
+                   o.get('website') and 
+                   o.get('website') not in ['No website found', 'None', '', 'N/A'] and
+                   o['website'].startswith('http')]
+        print(f"Search returned {len(orgs)} orgs, {len(filtered)} had valid websites")
+        return filtered
     except Exception as e:
         print(f"Search error: {e}")
         return []
