@@ -6,8 +6,7 @@ import json
 import requests
 import urllib.parse
 import threading
-import psycopg2
-import psycopg2.extras
+import pg8000.native
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -34,70 +33,73 @@ COUNTY_THRESHOLD = 80
 # ─── DATABASE ────────────────────────────────────────────────────────────────
 
 def get_db():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    # Parse DATABASE_URL for pg8000
+    url = DATABASE_URL
+    # Format: postgresql://user:pass@host:port/dbname
+    url = url.replace("postgresql://", "").replace("postgres://", "")
+    userpass, hostdbname = url.split("@")
+    user, password = userpass.split(":", 1)
+    hostport, dbname = hostdbname.split("/", 1)
+    if ":" in hostport:
+        host, port = hostport.split(":")
+        port = int(port)
+    else:
+        host, port = hostport, 5432
+    return pg8000.native.Connection(user=user, password=password, host=host, port=port, database=dbname, ssl_context=True)
 
 def init_db():
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS orgs (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    type TEXT,
-                    city TEXT,
-                    county TEXT,
-                    email TEXT,
-                    website TEXT,
-                    phone TEXT,
-                    status TEXT DEFAULT 'Contacted',
-                    notes TEXT,
-                    person_spoke_to TEXT,
-                    date_contacted TIMESTAMP DEFAULT NOW(),
-                    follow_up_date TIMESTAMP,
-                    reply_content TEXT,
-                    hunter_verified BOOLEAN DEFAULT FALSE,
-                    UNIQUE(name, city)
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS replies (
-                    id SERIAL PRIMARY KEY,
-                    org_name TEXT,
-                    their_email TEXT,
-                    reply_content TEXT,
-                    reply_date TIMESTAMP DEFAULT NOW(),
-                    follow_up_date TIMESTAMP,
-                    status TEXT DEFAULT 'New Reply',
-                    draft_subject TEXT,
-                    draft_body TEXT
-                )
-            """)
-        conn.commit()
+    db = get_db()
+    db.run("""
+        CREATE TABLE IF NOT EXISTS orgs (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT,
+            city TEXT,
+            county TEXT,
+            email TEXT,
+            website TEXT,
+            phone TEXT,
+            status TEXT DEFAULT 'Contacted',
+            notes TEXT,
+            person_spoke_to TEXT,
+            date_contacted TIMESTAMP DEFAULT NOW(),
+            follow_up_date TIMESTAMP,
+            reply_content TEXT,
+            hunter_verified BOOLEAN DEFAULT FALSE,
+            UNIQUE(name, city)
+        )
+    """)
+    db.run("""
+        CREATE TABLE IF NOT EXISTS replies (
+            id SERIAL PRIMARY KEY,
+            org_name TEXT,
+            their_email TEXT,
+            reply_content TEXT,
+            reply_date TIMESTAMP DEFAULT NOW(),
+            follow_up_date TIMESTAMP,
+            status TEXT DEFAULT 'New Reply',
+            draft_subject TEXT,
+            draft_body TEXT
+        )
+    """)
+    db.close()
     print("Database initialized")
 
 def get_contacted_names(county=None):
-    """Get all org names already in the database"""
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            if county:
-                county_short = county.split(",")[0].strip()
-                cur.execute("SELECT name FROM orgs WHERE county ILIKE %s", (f"%{county_short}%",))
-            else:
-                cur.execute("SELECT name FROM orgs")
-            return [r[0] for r in cur.fetchall()]
+    db = get_db()
+    if county:
+        county_short = county.split(",")[0].strip()
+        rows = db.run("SELECT name FROM orgs WHERE county ILIKE :county", county=f"%{county_short}%")
+    else:
+        rows = db.run("SELECT name FROM orgs")
+    db.close()
+    return [r[0] for r in rows]
 
 def get_current_county():
-    """Determine which county to work on next"""
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT county, COUNT(*) as cnt 
-                FROM orgs 
-                WHERE status != 'Dead'
-                GROUP BY county
-            """)
-            counts = {r[0]: r[1] for r in cur.fetchall()}
-    
+    db = get_db()
+    rows = db.run("SELECT county, COUNT(*) as cnt FROM orgs WHERE status != 'Dead' GROUP BY county")
+    db.close()
+    counts = {r[0]: r[1] for r in rows if r[0]}
     for county in COUNTIES:
         county_short = county.split(",")[0].strip()
         count = sum(v for k, v in counts.items() if k and county_short.lower() in k.lower())
@@ -106,39 +108,33 @@ def get_current_county():
     return COUNTIES[-1]
 
 def save_org(org, status="Contacted"):
-    """Save org to PostgreSQL"""
     follow_up = datetime.now() + timedelta(days=30)
     try:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO orgs (name, type, city, county, email, website, status, follow_up_date, hunter_verified)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (name, city) DO UPDATE SET
-                        status = EXCLUDED.status,
-                        email = CASE WHEN EXCLUDED.email != 'No email found' THEN EXCLUDED.email ELSE orgs.email END,
-                        hunter_verified = EXCLUDED.hunter_verified
-                """, (
-                    org.get("name"), org.get("type"), org.get("city"),
-                    org.get("county", ""), org.get("contact", "No email found"),
-                    org.get("website", ""), status, follow_up,
-                    org.get("hunter_verified", False)
-                ))
-            conn.commit()
+        db = get_db()
+        db.run("""
+            INSERT INTO orgs (name, type, city, county, email, website, status, follow_up_date, hunter_verified)
+            VALUES (:name, :type, :city, :county, :email, :website, :status, :follow_up, :hunter)
+            ON CONFLICT (name, city) DO UPDATE SET
+                status = EXCLUDED.status,
+                email = CASE WHEN EXCLUDED.email != 'No email found' THEN EXCLUDED.email ELSE orgs.email END,
+                hunter_verified = EXCLUDED.hunter_verified
+        """, name=org.get("name"), type=org.get("type"), city=org.get("city"),
+            county=org.get("county",""), email=org.get("contact","No email found"),
+            website=org.get("website",""), status=status, follow_up=follow_up,
+            hunter=org.get("hunter_verified", False))
+        db.close()
     except Exception as e:
         print(f"DB save error for {org.get('name')}: {e}")
 
 def update_org_status(name, status, notes="", person="", email=""):
-    """Update org status in database"""
     try:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE orgs SET status=%s, notes=%s, person_spoke_to=%s,
-                    email=CASE WHEN %s != '' THEN %s ELSE email END
-                    WHERE name=%s
-                """, (status, notes, person, email, email, name))
-            conn.commit()
+        db = get_db()
+        db.run("""
+            UPDATE orgs SET status=:status, notes=:notes, person_spoke_to=:person,
+            email=CASE WHEN :email != '' THEN :email ELSE email END
+            WHERE name=:name
+        """, status=status, notes=notes, person=person, email=email, name=name)
+        db.close()
     except Exception as e:
         print(f"DB update error: {e}")
 
@@ -154,14 +150,14 @@ def sync_to_sheet(org, status):
         print(f"Sheet sync error: {e}")
 
 def get_all_orgs(status_filter=None):
-    """Get all orgs from database"""
-    with get_db() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            if status_filter:
-                cur.execute("SELECT * FROM orgs WHERE status ILIKE %s ORDER BY date_contacted DESC", (f"%{status_filter}%",))
-            else:
-                cur.execute("SELECT * FROM orgs ORDER BY date_contacted DESC")
-            return [dict(r) for r in cur.fetchall()]
+    db = get_db()
+    if status_filter:
+        rows = db.run("SELECT id,name,type,city,county,email,website,phone,status,notes,person_spoke_to,date_contacted,follow_up_date,reply_content,hunter_verified FROM orgs WHERE status ILIKE :f ORDER BY date_contacted DESC", f=f"%{status_filter}%")
+    else:
+        rows = db.run("SELECT id,name,type,city,county,email,website,phone,status,notes,person_spoke_to,date_contacted,follow_up_date,reply_content,hunter_verified FROM orgs ORDER BY date_contacted DESC")
+    db.close()
+    cols = ['id','name','type','city','county','email','website','phone','status','notes','person_spoke_to','date_contacted','follow_up_date','reply_content','hunter_verified']
+    return [dict(zip(cols, r)) for r in rows]
 
 # ─── HUNTER ──────────────────────────────────────────────────────────────────
 
@@ -406,10 +402,11 @@ def run_daily_background():
         # Get reply drafts
         reply_drafts = []
         try:
-            with get_db() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute("SELECT * FROM replies WHERE status IN ('New Reply','Follow-up needed')")
-                    pending_replies = [dict(r) for r in cur.fetchall()]
+            db = get_db()
+            rows = db.run("SELECT org_name,their_email,reply_content,follow_up_date,status FROM replies WHERE status IN ('New Reply','Follow-up needed')")
+            db.close()
+            cols = ['org_name','their_email','reply_content','follow_up_date','status']
+            pending_replies = [dict(zip(cols, r)) for r in rows]
             for r in pending_replies:
                 is_fu = r['status'] == 'Follow-up needed'
                 draft = generate_reply_draft(r['org_name'], r['reply_content'] or '', is_fu, str(r.get('follow_up_date','')))
