@@ -95,7 +95,15 @@ def get_contacted_names(county=None):
     db.close()
     return [r[0] for r in rows]
 
-def get_current_county():
+def sync_to_sheet(org, status):
+    try:
+        requests.post(SHEET_URL, json={
+            "name": org.get("name"), "type": org.get("type"),
+            "city": org.get("city"), "contact": org.get("contact", ""),
+            "website": org.get("website", ""), "status": status
+        }, timeout=10)
+    except Exception as e:
+        print(f"Sheet sync error: {e}")
     db = get_db()
     rows = db.run("SELECT county, COUNT(*) as cnt FROM orgs WHERE status != 'Dead' GROUP BY county")
     db.close()
@@ -138,16 +146,13 @@ def update_org_status(name, status, notes="", person="", email=""):
     except Exception as e:
         print(f"DB update error: {e}")
 
-def sync_to_sheet(org, status):
-    """Sync to Google Sheets for human visibility"""
+def get_sheet_data():
     try:
-        requests.post(SHEET_URL, json={
-            "name": org.get("name"), "type": org.get("type"),
-            "city": org.get("city"), "contact": org.get("contact", ""),
-            "website": org.get("website", ""), "status": status
-        }, timeout=10)
+        res = requests.get(SHEET_URL, timeout=15)
+        return res.json()
     except Exception as e:
-        print(f"Sheet sync error: {e}")
+        print(f"Sheet data error: {e}")
+        return {"records": [], "replies": [], "sent_emails": {}}
 
 def get_all_orgs(status_filter=None):
     db = get_db()
@@ -395,6 +400,12 @@ def send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts=[
 def run_daily_background():
     try:
         print(f"Daily job starting at {datetime.now()}")
+        
+        # Get sent emails from Gmail - this is the source of truth
+        sheet_data = get_sheet_data()
+        sent_emails = sheet_data.get("sent_emails", {})
+        print(f"Gmail sent folder has {len(sent_emails)} contacted email addresses")
+        
         current_county = get_current_county()
         contacted_names = get_contacted_names()
         print(f"County: {current_county} | DB has {len(contacted_names)} orgs")
@@ -432,6 +443,13 @@ def run_daily_background():
                     org["contact"] = hunter_email
                     org["hunter_verified"] = True
                     print(f"Hunter: {org['name']} -> {hunter_email}")
+
+            has_email = org.get("contact") and org["contact"] != "No email found"
+
+            # Skip if already emailed according to Gmail sent folder
+            if has_email and org["contact"].lower() in sent_emails:
+                print(f"Skipping {org['name']} - already emailed {org['contact']}")
+                continue
 
             has_email = org.get("contact") and org["contact"] != "No email found"
 
