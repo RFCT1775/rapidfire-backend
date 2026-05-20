@@ -263,6 +263,8 @@ def generate_email_text(org_name, org_type, org_city):
 
 Sound like a real person. Short sentences. Zero dashes of any kind. Get to the point.
 
+Use this as your template but personalize for the specific org:
+
 Hi there,
 
 My name is Michael D'Angelo. I'm a Marine Corps veteran turned stand-up comedian, which makes more sense than it sounds once you've spent time around Marines.
@@ -271,17 +273,23 @@ I run the Rapid Fire Comedy Tour, a nonprofit that brings live stand-up comedy t
 
 I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. If you have an upcoming event and want someone who actually gets your world, I'd love to talk.
 
-You can check out letters of recommendation from previous shows at www.rapidfirecomedytour.org.
-
-Worth a quick call?
+You can check out letters of recommendation from previous shows at <a href="https://www.rapidfirecomedytour.org">www.rapidfirecomedytour.org</a>.
 
 Semper Fi,
 Michael D'Angelo
 Rapid Fire Comedy Tour
 info@rapidfirecomedytour.org
-www.rapidfirecomedytour.org
+<a href="https://www.rapidfirecomedytour.org">www.rapidfirecomedytour.org</a>
 
-RULES: Zero dashes. Never say "free". Under 180 words. Short sentences. No filler. Reference their community.
+RULES:
+- Zero dashes of any kind
+- Never say "free"
+- Under 180 words
+- Short sentences
+- No filler phrases
+- No sign-off questions like "Worth a quick call?" or "Worth a conversation?" - just end with the website line
+- Reference their specific community naturally
+- Keep the HTML anchor tags for the website links exactly as shown
 
 Organization: {org_name}
 Type: {org_type}
