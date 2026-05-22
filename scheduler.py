@@ -5,10 +5,10 @@ def run_daily_job():
     backend_url = os.environ.get("BACKEND_URL", "https://web-production-a085e.up.railway.app")
     try:
         print(f"Triggering daily job via web server...")
-        res = requests.post(f"{backend_url}/run-daily", timeout=300)
+        res = requests.post(f"{backend_url}/run-daily", timeout=30)
         data = res.json()
         if data.get("success"):
-            print(f"Daily job complete! Emails: {data.get('emails')} | Calls: {data.get('calls')} | City: {data.get('city')}")
+            print(f"Daily job triggered successfully. Check web server logs for results.")
         else:
             print(f"Daily job error: {data.get('error')}")
     except Exception as e:

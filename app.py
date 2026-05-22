@@ -409,11 +409,15 @@ def run_daily_background():
     try:
         print(f"Daily job starting at {datetime.now()}")
         
-        # Get sent emails from Gmail - this is the source of truth
-        sheet_data = get_sheet_data()
-        sent_emails = sheet_data.get("sent_emails", {})
-        print(f"Gmail sent folder has {len(sent_emails)} contacted email addresses")
-        
+        # Get sent emails from Gmail - source of truth for deduplication
+        sent_emails = {}
+        try:
+            sheet_data = get_sheet_data()
+            sent_emails = sheet_data.get("sent_emails", {}) if isinstance(sheet_data, dict) else {}
+            print(f"Gmail sent folder has {len(sent_emails)} contacted addresses")
+        except Exception as e:
+            print(f"Could not get sent emails, continuing anyway: {e}")
+
         current_county = get_current_county()
         contacted_names = get_contacted_names()
         print(f"County: {current_county} | DB has {len(contacted_names)} orgs")
@@ -483,8 +487,8 @@ def run_daily_background():
                 except Exception as e:
                     print(f"Call error: {e}")
 
-        send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts)
-        print("Daily job complete!")
+        result = send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts)
+        print(f"Daily job complete! Emails: {len(orgs_and_emails)} | Calls: {len(call_list)} | County: {current_county} | Digest sent: {result}")
 
     except Exception as e:
         print(f"Daily job error: {e}")
