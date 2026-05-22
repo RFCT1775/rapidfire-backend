@@ -104,6 +104,8 @@ def sync_to_sheet(org, status):
         }, timeout=10)
     except Exception as e:
         print(f"Sheet sync error: {e}")
+
+def get_current_county():
     db = get_db()
     rows = db.run("SELECT county, COUNT(*) as cnt FROM orgs WHERE status != 'Dead' GROUP BY county")
     db.close()
