@@ -275,13 +275,13 @@ I run the Rapid Fire Comedy Tour, a nonprofit that brings live stand-up comedy t
 
 I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. If you have an upcoming event and want someone who actually gets your world, I'd love to talk.
 
-You can check out letters of recommendation from previous shows at <a href="https://www.rapidfirecomedytour.org">www.rapidfirecomedytour.org</a>.
+You can check out letters of recommendation from previous shows at www.rapidfirecomedytour.org.
 
 Semper Fi,
 Michael D'Angelo
 Rapid Fire Comedy Tour
 info@rapidfirecomedytour.org
-<a href="https://www.rapidfirecomedytour.org">www.rapidfirecomedytour.org</a>
+www.rapidfirecomedytour.org
 
 RULES:
 - Zero dashes of any kind
@@ -291,7 +291,7 @@ RULES:
 - No filler phrases
 - No sign-off questions like "Worth a quick call?" or "Worth a conversation?" - just end with the website line
 - Reference their specific community naturally
-- Keep the HTML anchor tags for the website links exactly as shown
+- Keep all URLs as plain text, no HTML tags
 
 Organization: {org_name}
 Type: {org_type}
