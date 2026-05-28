@@ -216,17 +216,17 @@ def search_orgs_with_claude(county, exclude_names):
 
     prompt = f"""Find up to 40 real organizations in {county_short}, {state} that would enjoy a live comedy show, guest speaker, or emcee at their events.
 
-Include these types:
-- Veterans/military groups: VFW posts, American Legion posts, Marine Corps League, DAV chapters
-- First responder groups: firefighter locals/unions, police protective leagues, EMS associations  
-- Tactical training companies: veteran-owned firearms training, shooting ranges, self-defense schools
-- Executive private security firms: executive protection companies, corporate security consultancies
+Include these types ONLY:
+- Veterans/military groups: VFW posts, American Legion posts, Marine Corps League, DAV chapters, veteran service organizations, military fraternal groups
+- First responder groups: firefighter locals/unions, police protective leagues, EMS associations, sheriff associations, benevolent societies
+- Tactical and firearms training: veteran-owned firearms training companies, shooting ranges, self-defense schools, tactical training groups
 {exclude_str}
 
 STRICT RULES:
 - ONLY include organizations with a known, real website URL starting with http
 - If you don't know their website with confidence, skip them
 - Do not guess or make up websites
+- Do NOT include executive protection or private security companies
 - Quality over quantity
 
 For each org:
@@ -234,7 +234,7 @@ For each org:
 - city: city in {county_short}
 - contact: real email only, or "No email found"
 - website: real URL starting with http, or skip this org
-- type: one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group", "Private security"
+- type: one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
 
 Return ONLY a JSON array:
 [{{"name":"...","city":"...","contact":"...","website":"...","type":"..."}}]"""
