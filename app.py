@@ -168,6 +168,27 @@ def get_all_orgs(status_filter=None):
 
 # ─── HUNTER ──────────────────────────────────────────────────────────────────
 
+def verify_website(url):
+    """Check if a website actually loads"""
+    if not url or not url.startswith('http'):
+        return False
+    try:
+        res = requests.get(url, timeout=8, allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        return res.status_code < 400
+    except:
+        return False
+
+def verify_website(url):
+    if not url or not url.startswith('http'):
+        return False
+    try:
+        res = requests.get(url, timeout=8, allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        return res.status_code < 400
+    except:
+        return False
+
 def find_email_with_hunter(org_name, website):
     if not HUNTER_API_KEY or not website:
         return None
@@ -450,7 +471,12 @@ def run_daily_background():
         for org in orgs:
             org['county'] = current_county
 
-            # Hunter first on every org with a website
+            # Verify website actually loads - skip if dead
+            if not verify_website(org.get('website', '')):
+                print(f"Dead website, skipping: {org['name']} ({org.get('website','')})")
+                continue
+
+            # Hunter first on every org with a working website
             if org.get("website"):
                 hunter_email = find_email_with_hunter(org['name'], org['website'])
                 if hunter_email:
@@ -511,6 +537,38 @@ def init_db_route():
         return jsonify({'success': True, 'message': 'Database initialized'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/verify-sheet', methods=['GET', 'POST'])
+def verify_sheet():
+    def verify_bg():
+        try:
+            orgs = get_all_orgs()
+            killed = 0
+            kept = 0
+            for org in orgs:
+                status = str(org.get('status', ''))
+                if 'Dead' in status or 'Booked' in status:
+                    continue
+                website = org.get('website', '')
+                if not website or not website.startswith('http'):
+                    continue
+                if not verify_website(website):
+                    update_org_status(org['name'], 'Dead - website not working')
+                    sync_to_sheet({'name': org['name'], 'type': org['type'],
+                        'city': org['city'], 'contact': org['email'],
+                        'website': website}, 'Dead - website not working')
+                    killed += 1
+                    print(f"Dead website killed: {org['name']} ({website})")
+                else:
+                    kept += 1
+            print(f"Sheet verification complete. Killed: {killed} | Active: {kept}")
+        except Exception as e:
+            print(f"Verify sheet error: {e}")
+
+    thread = threading.Thread(target=verify_bg)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'success': True, 'message': 'Website verification started. Check your sheet in a few minutes.'})
 
 @app.route('/dashboard-data', methods=['GET'])
 def dashboard_data():
