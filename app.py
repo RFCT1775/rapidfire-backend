@@ -239,7 +239,7 @@ def search_orgs_with_claude(county, exclude_names):
 
 Include these types ONLY:
 - Veterans/military groups: VFW posts, American Legion posts, Marine Corps League, DAV chapters, veteran service organizations, military fraternal groups
-- First responder groups: firefighter locals/unions, police protective leagues, EMS associations, sheriff associations, benevolent societies
+- First responder groups: firefighter locals/unions, police protective leagues, EMS associations, sheriff associations, benevolent societies, private ambulance companies (AMR, Medic West, Falck, Global Medical Response), county EMS agencies, paramedic associations, emergency medical services unions
 - Tactical and firearms training: veteran-owned firearms training companies, shooting ranges, self-defense schools, tactical training groups
 {exclude_str}
 
@@ -255,7 +255,7 @@ For each org:
 - city: city in {county_short}
 - contact: real email only, or "No email found"
 - website: real URL starting with http, or skip this org
-- type: one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Veterans group", "Tactical training group"
+- type: one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Private ambulance", "Veterans group", "Tactical training group"
 
 Return ONLY a JSON array:
 [{{"name":"...","city":"...","contact":"...","website":"...","type":"..."}}]"""
