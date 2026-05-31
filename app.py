@@ -431,7 +431,7 @@ def send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts=[
 def run_daily_background():
     try:
         print(f"Daily job starting at {datetime.now()}")
-        
+
         # Get sent emails from Gmail - source of truth for deduplication
         sent_emails = {}
         try:
@@ -440,10 +440,6 @@ def run_daily_background():
             print(f"Gmail sent folder has {len(sent_emails)} contacted addresses")
         except Exception as e:
             print(f"Could not get sent emails, continuing anyway: {e}")
-
-        current_county = get_current_county()
-        contacted_names = get_contacted_names()
-        print(f"County: {current_county} | DB has {len(contacted_names)} orgs")
 
         # Get reply drafts
         reply_drafts = []
@@ -462,61 +458,73 @@ def run_daily_background():
         except Exception as e:
             print(f"Reply draft error: {e}")
 
-        orgs = search_orgs_with_claude(current_county, contacted_names)
-        print(f"Found {len(orgs)} new orgs")
-
+        EMAIL_TARGET = 20
         orgs_and_emails = []
         call_list = []
+        contacted_names = get_contacted_names()
+        current_county = COUNTIES[0]
 
-        for org in orgs:
-            org['county'] = current_county
+        # Loop through counties until we hit 20 emails
+        for county in COUNTIES:
+            if len(orgs_and_emails) >= EMAIL_TARGET:
+                break
 
-            # Verify website actually loads - skip if dead
-            if not verify_website(org.get('website', '')):
-                print(f"Dead website, skipping: {org['name']} ({org.get('website','')})")
-                continue
+            current_county = county
+            already_found = [o[0]['name'] for o in orgs_and_emails] + [o['name'] for o in call_list]
+            print(f"Searching {county} | Emails so far: {len(orgs_and_emails)}/{EMAIL_TARGET}")
 
-            # Hunter first on every org with a working website
-            if org.get("website"):
+            orgs = search_orgs_with_claude(county, contacted_names + already_found)
+            print(f"Found {len(orgs)} new orgs in {county}")
+
+            for org in orgs:
+                if len(orgs_and_emails) >= EMAIL_TARGET:
+                    break
+
+                org['county'] = county
+
+                # Verify website loads
+                if not verify_website(org.get('website', '')):
+                    print(f"Dead website, skipping: {org['name']}")
+                    continue
+
+                # Run Hunter on every org with a working website
                 hunter_email = find_email_with_hunter(org['name'], org['website'])
                 if hunter_email:
                     org["contact"] = hunter_email
                     org["hunter_verified"] = True
                     print(f"Hunter: {org['name']} -> {hunter_email}")
 
-            has_email = org.get("contact") and org["contact"] != "No email found"
+                has_email = org.get("contact") and org["contact"] != "No email found"
 
-            # Skip if already emailed according to Gmail sent folder
-            if has_email and org["contact"].lower() in sent_emails:
-                print(f"Skipping {org['name']} - already emailed {org['contact']}")
-                continue
+                # Skip if already emailed
+                if has_email and org["contact"].lower() in sent_emails:
+                    print(f"Skipping {org['name']} - already emailed")
+                    save_org(org, "Already contacted")
+                    sync_to_sheet(org, "Already contacted")
+                    contacted_names.append(org['name'])
+                    continue
 
-            has_email = org.get("contact") and org["contact"] != "No email found"
-
-            if has_email:
-                try:
-                    email = generate_email_text(org['name'], org['type'], org['city'])
-                    save_org(org, "Contacted")
-                    sync_to_sheet(org, "Contacted")
-                    orgs_and_emails.append((org, email))
-                    print(f"Email ready: {org['name']}")
-                except Exception as e:
-                    print(f"Email error: {e}")
-            else:
-                try:
-                    phone = find_phone_number(org['name'], org['city'], org.get('website',''))
-                    org["phone"] = phone
-                    search_q = urllib.parse.quote(f"{org['name']} {org['city']} phone number")
-                    status = f"Call directly: {phone}" if phone != "Not found" else f"Call directly - google.com/search?q={search_q}"
-                    save_org(org, status)
-                    sync_to_sheet(org, status)
+                if has_email:
+                    try:
+                        email = generate_email_text(org['name'], org['type'], org['city'])
+                        save_org(org, "Contacted")
+                        sync_to_sheet(org, "Contacted")
+                        orgs_and_emails.append((org, email))
+                        contacted_names.append(org['name'])
+                        print(f"Email ready: {org['name']} ({len(orgs_and_emails)}/{EMAIL_TARGET})")
+                    except Exception as e:
+                        print(f"Email error: {e}")
+                else:
+                    # Log to sheet even without email - website verified so it's legit
+                    save_org(org, "No email - website verified")
+                    sync_to_sheet(org, "No email - website verified")
                     call_list.append(org)
-                    print(f"Call list: {org['name']} ({phone})")
-                except Exception as e:
-                    print(f"Call error: {e}")
+                    contacted_names.append(org['name'])
+                    print(f"No email logged: {org['name']}")
 
+        print(f"Done. Emails: {len(orgs_and_emails)} | Call list: {len(call_list)} | Last county: {current_county}")
         result = send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts)
-        print(f"Daily job complete! Emails: {len(orgs_and_emails)} | Calls: {len(call_list)} | County: {current_county} | Digest sent: {result}")
+        print(f"Digest sent: {result}")
 
     except Exception as e:
         print(f"Daily job error: {e}")
