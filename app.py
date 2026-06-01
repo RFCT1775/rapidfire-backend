@@ -294,7 +294,9 @@ My name is Michael D'Angelo. I'm a Marine Corps veteran turned stand-up comedian
 
 I run the Rapid Fire Comedy Tour, a nonprofit that brings live stand-up comedy to first responders, military communities, and training groups. The people who deserve a good laugh more than anyone.
 
-I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. If you have an upcoming event and want someone who actually gets your world, I'd love to talk.
+I'd love to bring a show to [ORG NAME]. I book comedians for events across the country and I'm also available as a guest speaker or emcee for banquets, graduations, and award ceremonies. The production is completely turnkey — I bring all the equipment and handle all the logistics, so there's nothing for you to coordinate on your end.
+
+If you have an upcoming event and want someone who actually gets your world, I'd love to talk.
 
 You can check out letters of recommendation from previous shows at www.rapidfirecomedytour.org.
 
