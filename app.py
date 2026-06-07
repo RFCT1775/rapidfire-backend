@@ -465,6 +465,7 @@ def run_daily_background():
         call_list = []
         contacted_names = get_contacted_names()
         current_county = COUNTIES[0]
+        used_emails = set(sent_emails.keys())  # Start with all already-sent emails
 
         # Loop through counties until we hit 20 emails
         for county in COUNTIES:
@@ -498,11 +499,13 @@ def run_daily_background():
 
                 has_email = org.get("contact") and org["contact"] != "No email found"
 
-                # Skip if already emailed
-                if has_email and org["contact"].lower() in sent_emails:
-                    print(f"Skipping {org['name']} - already emailed")
-                    save_org(org, "Already contacted")
-                    sync_to_sheet(org, "Already contacted")
+                # Skip if this email has already been used (sent before OR used today)
+                if has_email and org["contact"].lower() in used_emails:
+                    print(f"Duplicate email, skipping: {org['name']} ({org['contact']})")
+                    # Still log to sheet as website verified, add to call list
+                    save_org(org, "No email - website verified")
+                    sync_to_sheet(org, "No email - website verified")
+                    call_list.append(org)
                     contacted_names.append(org['name'])
                     continue
 
@@ -512,17 +515,18 @@ def run_daily_background():
                         save_org(org, "Contacted")
                         sync_to_sheet(org, "Contacted")
                         orgs_and_emails.append((org, email))
+                        used_emails.add(org["contact"].lower())  # Mark this email as used
                         contacted_names.append(org['name'])
                         print(f"Email ready: {org['name']} ({len(orgs_and_emails)}/{EMAIL_TARGET})")
                     except Exception as e:
                         print(f"Email error: {e}")
                 else:
-                    # Log to sheet even without email - website verified so it's legit
+                    # No email found - website verified so add to call list
                     save_org(org, "No email - website verified")
                     sync_to_sheet(org, "No email - website verified")
                     call_list.append(org)
                     contacted_names.append(org['name'])
-                    print(f"No email logged: {org['name']}")
+                    print(f"No email, call list: {org['name']}")
 
         print(f"Done. Emails: {len(orgs_and_emails)} | Call list: {len(call_list)} | Last county: {current_county}")
         result = send_digest_email(orgs_and_emails, call_list, current_county, reply_drafts)
