@@ -235,27 +235,35 @@ def search_orgs_with_claude(county, exclude_names):
     if exclude_names:
         exclude_str = "\n\nSkip these already-contacted organizations:\n" + "\n".join(f"- {n}" for n in exclude_names[:80])
 
-    prompt = f"""Find up to 40 real organizations in {county_short}, {state} that would enjoy a live comedy show, guest speaker, or emcee at their events.
+    prompt = f"""Find up to 40 real organizations in {county_short}, {state} that fit one of these target categories.
 
-Include these types ONLY:
-- Veterans/military groups: VFW posts, American Legion posts, Marine Corps League, DAV chapters, veteran service organizations, military fraternal groups
-- First responder groups: firefighter locals/unions, police protective leagues, EMS associations, sheriff associations, benevolent societies, private ambulance companies (AMR, Medic West, Falck, Global Medical Response), county EMS agencies, paramedic associations, emergency medical services unions
-- Tactical and firearms training: veteran-owned firearms training companies, shooting ranges, self-defense schools, tactical training groups
-{exclude_str}
+TARGET CATEGORIES (only these, nothing else):
+1. Law enforcement agencies and associations: police departments, sheriff offices, police officer associations, peace officer associations, deputy sheriff associations
+2. Fire departments and firefighter associations: municipal fire departments, county fire, firefighter unions (IAFF locals), volunteer fire departments
+3. EMS providers: private ambulance companies (AMR, Falck, Global Medical Response, Medic West, etc.), county EMS agencies, paramedic associations
+4. Military installations: active duty bases, reserve centers, National Guard armories
+5. Tactical training companies: firearms training schools, shooting ranges with instruction programs, defensive tactics schools
+
+DO NOT INCLUDE:
+- Veterans service organizations (VFW, American Legion, DAV, Marine Corps League, etc.)
+- Private security or executive protection companies
+- Astronomy clubs, hobby groups, or anything with overlapping acronyms (e.g. FPOA = Fremont Peak Observatory Association, NOT a police org)
+- Generic membership organizations not directly tied to the categories above
+- Organizations whose primary purpose is something other than the five categories listed
 
 STRICT RULES:
-- ONLY include organizations with a known, real website URL starting with http
-- If you don't know their website with confidence, skip them
-- Do not guess or make up websites
-- Do NOT include executive protection or private security companies
-- Quality over quantity
+- Each org MUST have a real, known website URL starting with http. If you cannot name the actual website with confidence, skip the org entirely. Do not guess.
+- The website must belong to the organization itself, not a directory or news article about them.
+- Verify the org name matches the category. Acronyms can be misleading. When unsure, skip.
+- Quality over quantity. 5 verified orgs beat 40 maybes.
+{exclude_str}
 
-For each org:
+For each org return:
 - name: exact name
 - city: city in {county_short}
-- contact: real email only, or "No email found"
-- website: real URL starting with http, or skip this org
-- type: one of "Fire department", "Police & law enforcement", "EMS & paramedics", "Private ambulance", "Veterans group", "Tactical training group"
+- contact: real email if known, otherwise "No email found"
+- website: real URL starting with http
+- type: one of "Police & law enforcement", "Fire department", "Private ambulance", "Military installation", "Tactical training group"
 
 Return ONLY a JSON array:
 [{{"name":"...","city":"...","contact":"...","website":"...","type":"..."}}]"""
