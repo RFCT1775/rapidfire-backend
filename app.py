@@ -167,6 +167,26 @@ def get_all_orgs(status_filter=None):
     return [dict(zip(cols, r)) for r in rows]
 
 # ─── HUNTER ──────────────────────────────────────────────────────────────────
+def fetch_page_text(url, max_chars=4000):
+    """Fetch a URL and extract readable text content, truncated."""
+    if not url or not url.startswith('http'):
+        return None
+    try:
+        res = requests.get(url, timeout=10, allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        if res.status_code >= 400:
+            return None
+        # Strip HTML tags crudely - good enough for classification
+        import re
+        text = re.sub(r'<script[^>]*>.*?</script>', ' ', res.text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>.*?</style>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:max_chars] if text else None
+    except Exception as e:
+        print(f"Fetch error for {url}: {e}")
+        return None
+
 
 def verify_website(url):
     """Check if a website actually loads"""
@@ -227,6 +247,62 @@ def find_phone_number(org_name, org_city, org_website):
         return json.loads(text).get("phone", "Not found")
     except:
         return "Not found"
+
+def classify_org_with_claude(org_name, org_type, website_url, page_text):
+    """
+    Given an org's name, claimed type, website, and homepage text, decide if it
+    really matches one of our target categories. Returns a dict:
+        { "match": True/False, "category": "...", "reason": "..." }
+    """
+    if not page_text:
+        return {"match": False, "category": None, "reason": "Could not fetch website content"}
+
+    prompt = f"""You are verifying whether an organization fits one of these target categories for an outreach campaign. Be strict. When in doubt, reject.
+
+TARGET CATEGORIES:
+1. Law enforcement: police departments, sheriff offices, police officer associations, peace officer associations, deputy sheriff associations
+2. Fire department: municipal/county fire departments, firefighter unions (IAFF locals), volunteer fire departments
+3. EMS / private ambulance: AMR, Falck, Global Medical Response, county EMS agencies, paramedic associations, private ambulance services
+4. Military installation: active duty bases, reserve centers, National Guard armories
+5. Tactical training: firearms training schools, shooting ranges with instruction, defensive tactics schools
+
+NOT TARGETS (must reject these):
+- Veterans service organizations (VFW, American Legion, DAV, Marine Corps League)
+- Private security or executive protection companies
+- Astronomy clubs, hobby groups, civic organizations
+- Organizations whose acronyms collide with police/fire ones (e.g. FPOA = Fremont Peak Observatory Association is NOT a police org)
+- News sites, directories, or pages ABOUT an organization rather than the organization itself
+- Government pages that aren't the actual agency (e.g. a city council page mentioning the fire dept is not the fire dept)
+
+ORGANIZATION TO CLASSIFY:
+Name: {org_name}
+Claimed type: {org_type}
+Website: {website_url}
+
+HOMEPAGE TEXT (truncated):
+{page_text}
+
+Based on the homepage text, does this organization clearly fit one of the 5 target categories? Be strict. If the homepage is generic, unclear, or doesn't confirm the category, reject.
+
+Return ONLY a JSON object with these exact fields:
+{{"match": true or false, "category": "Police & law enforcement" | "Fire department" | "Private ambulance" | "Military installation" | "Tactical training group" | null, "reason": "one sentence explaining the decision"}}"""
+
+    try:
+        response = client.messages.create(model="claude-opus-4-5", max_tokens=300,
+            messages=[{"role": "user", "content": prompt}])
+        text = response.content[0].text.strip()
+        if "```json" in text: text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text: text = text.split("```")[1].split("```")[0].strip()
+        result = json.loads(text)
+        return {
+            "match": bool(result.get("match", False)),
+            "category": result.get("category"),
+            "reason": result.get("reason", "No reason given")
+        }
+    except Exception as e:
+        print(f"Classifier error for {org_name}: {e}")
+        return {"match": False, "category": None, "reason": f"Classifier error: {e}"}
+
 
 def search_orgs_with_claude(county, exclude_names):
     county_short = county.split(",")[0].strip()
@@ -497,7 +573,19 @@ def run_daily_background():
                 if not verify_website(org.get('website', '')):
                     print(f"Dead website, skipping: {org['name']}")
                     continue
-
+                    # Classify the org based on homepage content - the FPOA fix
+                page_text = fetch_page_text(org.get('website', ''))
+                classification = classify_org_with_claude(org['name'], org.get('type', ''), org.get('website', ''), page_text)
+                if not classification['match']:
+                    print(f"Rejected by classifier: {org['name']} - {classification['reason']}")
+                    org['notes'] = f"Auto-rejected: {classification['reason']}"
+                    save_org(org, "Rejected - wrong category")
+                    sync_to_sheet(org, "Rejected - wrong category")
+                    contacted_names.append(org['name'])
+                    continue
+                # Update the type to what the classifier actually saw
+                if classification.get('category'):
+                    org['type'] = classification['category']
                 # Run Hunter on every org with a working website
                 hunter_email = find_email_with_hunter(org['name'], org['website'])
                 if hunter_email:
