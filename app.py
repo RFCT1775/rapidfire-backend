@@ -785,6 +785,65 @@ def find_phone():
     except Exception as e:
         return jsonify({'success': False, 'phone': 'Not found'}), 500
 
+@app.route('/sync-to-sheet', methods=['GET', 'POST'])
+def sync_to_sheet_endpoint():
+    """One-shot sync that rewrites the Google Sheet from Postgres.
+
+    Sheet columns (in order):
+    Organization | Type | City | Email | Date Contacted | Follow-up Date | Status | Website | Result
+    """
+    if not SHEET_URL:
+        return jsonify({'success': False, 'error': 'SHEET_URL not configured'}), 500
+
+    try:
+        # Pull all orgs from Postgres, sorted for stable ordering
+        db = get_db()
+        rows = db.run("""
+            SELECT name, type, city, email, date_contacted, follow_up_date,
+                   status, website, result
+            FROM orgs
+            ORDER BY status, name
+        """)
+        db.close()
+
+        # Build rows in the order the Sheet expects
+        sheet_rows = []
+        for r in rows:
+            name, type_, city, email, date_contacted, follow_up_date, status, website, result = r
+            sheet_rows.append([
+                name or '',
+                type_ or '',
+                city or '',
+                email or '',
+                date_contacted.strftime('%m/%d/%Y') if date_contacted else '',
+                follow_up_date.strftime('%m/%d/%Y') if follow_up_date else '',
+                status or '',
+                website or '',
+                result or ''
+            ])
+
+        # POST the full payload to Apps Script. The Apps Script side will need
+        # an action="full_sync" handler that wipes and rewrites the sheet.
+        payload = {
+            'action': 'full_sync',
+            'headers': ['Organization', 'Type', 'City', 'Email',
+                        'Date Contacted', 'Follow-up Date', 'Status',
+                        'Website', 'Result'],
+            'rows': sheet_rows
+        }
+
+        res = requests.post(SHEET_URL, json=payload, timeout=60)
+
+        return jsonify({
+            'success': True,
+            'rows_synced': len(sheet_rows),
+            'apps_script_response_code': res.status_code,
+            'apps_script_response_body': res.text[:500]
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok', 'message': 'Rapid Fire backend is running!'})
