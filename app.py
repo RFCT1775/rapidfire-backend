@@ -119,6 +119,11 @@ def get_current_county():
 
 def save_org(org, status="Contacted"):
     follow_up = datetime.now() + timedelta(days=30)
+    # Normalize "No email found" placeholder strings to NULL so they don't
+    # collide with the UNIQUE(email) constraint on real emails
+    email_val = org.get("contact", "")
+    if not email_val or email_val == "No email found" or email_val.strip() == "":
+        email_val = None
     try:
         db = get_db()
         db.run("""
@@ -126,15 +131,21 @@ def save_org(org, status="Contacted"):
             VALUES (:name, :type, :city, :county, :email, :website, :status, :follow_up, :hunter)
             ON CONFLICT (name, city) DO UPDATE SET
                 status = EXCLUDED.status,
-                email = CASE WHEN EXCLUDED.email != 'No email found' THEN EXCLUDED.email ELSE orgs.email END,
+                email = COALESCE(EXCLUDED.email, orgs.email),
                 hunter_verified = EXCLUDED.hunter_verified
         """, name=org.get("name"), type=org.get("type"), city=org.get("city"),
-            county=org.get("county",""), email=org.get("contact","No email found"),
+            county=org.get("county",""), email=email_val,
             website=org.get("website",""), status=status, follow_up=follow_up,
             hunter=org.get("hunter_verified", False))
         db.close()
     except Exception as e:
-        print(f"DB save error for {org.get('name')}: {e}")
+        # UNIQUE(email) violation is expected when we rediscover an org
+        # whose email is already in the database. Log it concisely, don't dump
+        # the full error blob.
+        if "unique_active_email" in str(e):
+            print(f"Skipping {org.get('name')} - email already in DB ({email_val})")
+        else:
+            print(f"DB save error for {org.get('name')}: {e}")
 
 def update_org_status(name, status, notes="", person="", email=""):
     try:
