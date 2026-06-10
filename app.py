@@ -85,6 +85,34 @@ def init_db():
     db.close()
     print("Database initialized")
 
+def normalize_email(email):
+    """Lowercase, strip whitespace. None-safe."""
+    if not email:
+        return None
+    return email.strip().lower()
+
+
+def get_contacted_emails():
+    """Return the set of every email we've ever contacted, normalized.
+
+    This is the source of truth for cross-run deduplication, replacing
+    the unreliable Gmail-sent-folder lookup which times out.
+    """
+    db = get_db()
+    rows = db.run("""
+        SELECT email FROM orgs
+        WHERE email IS NOT NULL
+          AND email != ''
+    """)
+    db.close()
+    emails = set()
+    for r in rows:
+        normalized = normalize_email(r[0])
+        if normalized:
+            emails.add(normalized)
+    return emails
+
+
 def get_contacted_names(county=None):
     db = get_db()
     if county:
@@ -529,14 +557,15 @@ def run_daily_background():
     try:
         print(f"Daily job starting at {datetime.now()}")
 
-        # Get sent emails from Gmail - source of truth for deduplication
-        sent_emails = {}
+        # Build the dedup set from Postgres - source of truth for "have we
+        # emailed this address before". Replaces the old Gmail lookup which
+        # was timing out and silently leaving the dedup set empty.
+        used_emails = set()
         try:
-            sheet_data = get_sheet_data()
-            sent_emails = sheet_data.get("sent_emails", {}) if isinstance(sheet_data, dict) else {}
-            print(f"Gmail sent folder has {len(sent_emails)} contacted addresses")
+            used_emails = get_contacted_emails()
+            print(f"Postgres has {len(used_emails)} previously-contacted email addresses")
         except Exception as e:
-            print(f"Could not get sent emails, continuing anyway: {e}")
+            print(f"Could not load contacted emails from Postgres: {e}")
 
         # Get reply drafts
         reply_drafts = []
@@ -560,7 +589,7 @@ def run_daily_background():
         call_list = []
         contacted_names = get_contacted_names()
         current_county = COUNTIES[0]
-        used_emails = set(sent_emails.keys())  # Start with all already-sent emails
+
 
         # Loop through counties until we hit 20 emails
         for county in COUNTIES:
@@ -607,7 +636,8 @@ def run_daily_background():
                 has_email = org.get("contact") and org["contact"] != "No email found"
 
                 # Skip if this email has already been used (sent before OR used today)
-                if has_email and org["contact"].lower() in used_emails:
+                normalized_contact = normalize_email(org["contact"]) if has_email else None
+                if has_email and normalized_contact in used_emails:
                     print(f"Duplicate email, skipping: {org['name']} ({org['contact']})")
                     # Still log to sheet as website verified, add to call list
                     save_org(org, "No email - website verified")
@@ -622,7 +652,7 @@ def run_daily_background():
                         save_org(org, "Contacted")
                         sync_to_sheet(org, "Contacted")
                         orgs_and_emails.append((org, email))
-                        used_emails.add(org["contact"].lower())  # Mark this email as used
+                        used_emails.add(normalized_contact)  # Mark this email as used
                         contacted_names.append(org['name'])
                         print(f"Email ready: {org['name']} ({len(orgs_and_emails)}/{EMAIL_TARGET})")
                     except Exception as e:
