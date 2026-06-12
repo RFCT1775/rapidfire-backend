@@ -878,6 +878,86 @@ def find_phone():
     except Exception as e:
         return jsonify({'success': False, 'phone': 'Not found'}), 500
 
+@app.route('/log-bounce', methods=['POST'])
+def log_bounce():
+    """Mark an org as bounced based on its email address.
+
+    Called by Apps Script when it detects a bounce in Gmail.
+    """
+    try:
+        data = request.get_json() or {}
+        email = (data.get('email') or '').strip().lower()
+        if not email:
+            return jsonify({'success': False, 'error': 'email required'}), 400
+
+        db = get_db()
+        rows = db.run("""
+            UPDATE orgs
+            SET status = 'Bounced - call or visit website'
+            WHERE LOWER(email) = :email
+              AND status NOT ILIKE '%bounce%'
+            RETURNING name
+        """, email=email)
+        db.close()
+
+        updated_names = [r[0] for r in rows] if rows else []
+        return jsonify({
+            'success': True,
+            'email': email,
+            'updated_count': len(updated_names),
+            'updated_orgs': updated_names
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/log-reply', methods=['POST'])
+def log_reply():
+    """Record a reply from an org.
+
+    Called by Apps Script when it detects a reply in Gmail.
+    """
+    try:
+        data = request.get_json() or {}
+        email = (data.get('email') or '').strip().lower()
+        reply_content = (data.get('reply_content') or '')[:2000]  # cap length
+        follow_up_str = data.get('follow_up_date', '')
+        if not email:
+            return jsonify({'success': False, 'error': 'email required'}), 400
+
+        # Update the org's status and reply_content
+        new_status = f"Replied - follow up by {follow_up_str}" if follow_up_str else "Replied"
+        db = get_db()
+        org_rows = db.run("""
+            UPDATE orgs
+            SET status = :status,
+                reply_content = :reply_content
+            WHERE LOWER(email) = :email
+              AND status NOT ILIKE '%replied%'
+            RETURNING id, name
+        """, status=new_status, reply_content=reply_content, email=email)
+
+        # Also log to the replies table
+        updated = []
+        for r in org_rows:
+            org_id, org_name = r[0], r[1]
+            updated.append(org_name)
+            db.run("""
+                INSERT INTO replies (org_name, their_email, reply_content, reply_date, status)
+                VALUES (:org_name, :email, :reply_content, NOW(), 'New Reply')
+            """, org_name=org_name, email=email, reply_content=reply_content)
+
+        db.close()
+        return jsonify({
+            'success': True,
+            'email': email,
+            'updated_count': len(updated),
+            'updated_orgs': updated
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+        
+
 @app.route('/sync-to-sheet', methods=['GET', 'POST'])
 def sync_to_sheet_endpoint():
     """One-shot sync that rewrites the Google Sheet from Postgres.
