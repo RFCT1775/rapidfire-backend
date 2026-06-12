@@ -248,24 +248,76 @@ def verify_website(url):
     except:
         return False
 
+# Role addresses bounce more often than they get opened. Skip them.
+ROLE_ADDRESS_PREFIXES = (
+    'info@', 'webmaster@', 'contact@', 'noreply@', 'no-reply@',
+    'president@', 'admin@', 'administration@', 'support@',
+    'office@', 'membership@', 'secretary@', 'treasurer@',
+    'general@', 'general-info@', 'inquiries@', 'hello@',
+    'mail@', 'postmaster@', 'webcontact@', 'feedback@'
+)
+
+# .mil addresses almost always block external senders. Skip outright.
+SKIP_DOMAINS = ('.mil',)
+
+HUNTER_MIN_CONFIDENCE = 80
+
+
+def is_low_quality_email(email):
+    """Return True if the address looks unlikely to actually receive mail."""
+    if not email or '@' not in email:
+        return True
+    email_lower = email.lower().strip()
+    if any(email_lower.startswith(p) for p in ROLE_ADDRESS_PREFIXES):
+        return True
+    if any(email_lower.endswith(d) for d in SKIP_DOMAINS):
+        return True
+    return False
+
+
 def find_email_with_hunter(org_name, website):
+    """Find a high-confidence personal email for an org.
+
+    Strict: only accept emails with confidence >= 80 and reject role
+    addresses and known-bouncy domains. Hunter returning 'info@' or a
+    pattern-guess with 45% confidence is worse than no email at all,
+    because we email it, it bounces, and our sender reputation suffers.
+    """
     if not HUNTER_API_KEY or not website:
         return None
     try:
         domain = website.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0].strip()
         if not domain or '.' not in domain:
             return None
+
+        # Try domain-search first - this returns Hunter-verified people at the domain
         res = requests.get("https://api.hunter.io/v2/domain-search",
-            params={"domain": domain, "api_key": HUNTER_API_KEY, "limit": 3}, timeout=10)
+            params={"domain": domain, "api_key": HUNTER_API_KEY, "limit": 10}, timeout=10)
         emails = res.json().get("data", {}).get("emails", [])
-        if emails:
-            return sorted(emails, key=lambda x: x.get("confidence", 0), reverse=True)[0].get("value")
+
+        # Sort by confidence, filter out role addresses and low confidence
+        candidates = sorted(emails, key=lambda x: x.get("confidence", 0), reverse=True)
+        for candidate in candidates:
+            email_val = candidate.get("value")
+            confidence = candidate.get("confidence", 0)
+            if not email_val:
+                continue
+            if confidence < HUNTER_MIN_CONFIDENCE:
+                continue
+            if is_low_quality_email(email_val):
+                print(f"Hunter: skipping low-quality {email_val} for {org_name}")
+                continue
+            return email_val
+
+        # Fall back to email-finder - more aggressive guesser, hold the line on confidence
         res2 = requests.get("https://api.hunter.io/v2/email-finder",
             params={"domain": domain, "company": org_name, "api_key": HUNTER_API_KEY}, timeout=10)
         data2 = res2.json().get("data", {})
         email = data2.get("email")
-        if email and data2.get("score", 0) > 40:
+        score = data2.get("score", 0)
+        if email and score >= HUNTER_MIN_CONFIDENCE and not is_low_quality_email(email):
             return email
+
         return None
     except Exception as e:
         print(f"Hunter error: {e}")
